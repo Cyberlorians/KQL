@@ -1,0 +1,4 @@
+SecurityEvent //finds credential dumping with mimikatz via taskmgr
+| where EventID == "4663"
+| where EventData contains "lsass.exe"
+| where ProcessName contains 'Taskmgr.exe'

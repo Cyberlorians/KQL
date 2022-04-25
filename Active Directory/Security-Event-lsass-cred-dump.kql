@@ -1,4 +1,0 @@
-SecurityEvent //credential dumping through taskmgr and lsass dump file
-| where EventID == "4663"
-| where EventData contains "lsass.exe"
-| where ProcessName contains 'Taskmgr.exe'

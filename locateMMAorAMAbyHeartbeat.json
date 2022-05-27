@@ -1,3 +1,4 @@
+//Queries the Heartbeat table to locate installed LA or Azure Monitor Agents and if on-prem or in Azure 
 Heartbeat
 | where TimeGenerated >= ago(7d)
 | where Category == "Direct Agent" or Category == "Azure Monitor Agent"

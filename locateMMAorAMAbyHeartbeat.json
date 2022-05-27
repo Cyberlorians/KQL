@@ -1,8 +1,8 @@
 //Queries the Heartbeat table to locate installed LA or Azure Monitor Agents and if on-prem or in Azure 
-Heartbeat 
-| where TimeGenerated >= ago(7d) 
+Heartbeat
+| where TimeGenerated >= ago(7d)
 | where Category == "Direct Agent" or Category == "Azure Monitor Agent"
-| where isnotempty(ResourceType) 
-| extend Cloud = ResourceProvider == "Microsoft.Compute" 
-| extend Onprem = ResourceProvider == "Microsoft.HybridCompute" 
+| where isnotempty(ResourceType)
+| extend Cloud = ResourceProvider == "Microsoft.Compute"
+| extend Onprem = ResourceProvider == "Microsoft.HybridCompute"
 | distinct Computer, ResourceType, Cloud, Onprem, Category

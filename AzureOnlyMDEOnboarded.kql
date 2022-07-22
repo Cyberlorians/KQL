@@ -1,0 +1,18 @@
+Heartbeat
+| where TimeGenerated >= ago(7d)
+| where Category in ("Direct Agent","Azure Monitor Agent")
+| summarize arg_max(TimeGenerated, *) by Computer
+| extend Environment = case(
+    ResourceProvider == "Microsoft.Compute", strcat=("Azure"),
+    ResourceProvider == "Microsoft.HybridCompute", strcat=("On Premises"),
+    "unknown"
+    )
+    | extend Agent = Category
+| project Computer=tolower(Computer), ResourceType, Environment, Agent
+| join kind=inner(
+    DeviceInfo
+    | where TimeGenerated >= ago(7d)
+    | summarize arg_max(TimeGenerated, *) by DeviceName
+    )
+    on $left.Computer == $right.DeviceName
+    | project TimeGenerated, ResourceType, Computer, DeviceId, Environment, Agent, MachineGroup, RegistryDeviceTag

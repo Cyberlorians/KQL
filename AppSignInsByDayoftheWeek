@@ -1,0 +1,18 @@
+//This query is based around Sentinel, currently if this query is used for MDE hunting queries the days may be off by one number.
+let Saturday = time(6.00:00:00);
+let Sunday = time(0.00:00:00);
+let Monday = time(1.00:00:00);
+let Tuesday = time(2.00:00:00);
+let Wednesday = time(3.00:00:00);
+let Thursday = time(4.00:00:00);
+let Friday = time(5.00:00:00);
+let timerange = 10d; //Set timerange to limit how far back the query goes
+//
+SigninLogs
+| where TimeGenerated > ago(timerange) //Comment out for no set limit in query
+| where AppDisplayName contains "APPNAME"
+| where dayofweek(TimeGenerated) == Saturday or dayofweek(TimeGenerated) == Sunday //Change or add days using list set above
+| project TimeGenerated, UserDisplayName, ConditionalAccessStatus, AppDisplayName
+| project-rename User = UserDisplayName
+| project-rename App = AppDisplayName
+| sort by TimeGenerated desc

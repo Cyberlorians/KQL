@@ -1,0 +1,7 @@
+union withsource = tt *
+| where TimeGenerated > startofday(ago(30d)) and TimeGenerated < startofday(now())
+| where _IsBillable == true
+| where tt == "SecurityEvent" //all secevents
+//| where tt == "SecurityEvent" and Computer contains 'cyberlorians.net' //secevents by suffix of computer
+| summarize GBytes=round(sum(_BilledSize/(1024*1024*1024)),2)  by  Solution=tt, Computer, Total
+| sort by GBytes nulls last

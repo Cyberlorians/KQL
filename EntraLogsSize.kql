@@ -1,0 +1,9 @@
+// All Tables
+union withsource = TableName SigninLogs, AuditLogs, AADNonInteractiveUserSignInLogs
+| summarize totalTableEntries = count(), TableSizeInGB = sum(estimate_data_size(*))/1000/1000/1000., TableSizeInMB = sum(estimate_data_size(*))/1000/1000. by TableName
+| union (
+    union withsource = EntraLogs SigninLogs, AuditLogs, AADNonInteractiveUserSignInLogs
+    | summarize totalTableEntries = count(), TableSizeInGB = sum(estimate_data_size(*))/1000/1000/1000., TableSizeInMB = sum(estimate_data_size(*))/1000/1000.
+    | extend TableName = "TOTAL - All Tables"
+)
+| sort by TableName asc

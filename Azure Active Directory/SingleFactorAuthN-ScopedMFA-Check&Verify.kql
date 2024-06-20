@@ -10,7 +10,7 @@ Why MFA? A whopping 99.9% of compromised accounts didn’t use MFA. This initiat
 
 For break-glass accounts and service account users, shifts in strategy will be necessary to align with these new requirements.
 
-Verify below who is using SFA. If you are using Terraform, add the app ID into the strings listed.
+Verify below who is using SFA. If you are using Terraform, add the app ID into the strings listed. CLI and PowerShell are Listed under app [Windows Azure Service Management API](https://learn.microsoft.com/en-us/entra/identity/conditional-access/concept-conditional-access-cloud-apps#windows-azure-service-management-api)
 
 //Single Factor AuthN scoped to 'Azure Portal, CLI and PowerShell' (requires data to be sent to a LAW) - COMMERCIAL/GCC
 SigninLogs

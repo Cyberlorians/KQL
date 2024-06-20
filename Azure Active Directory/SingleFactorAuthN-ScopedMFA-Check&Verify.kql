@@ -17,8 +17,8 @@ AADSignInEventsBeta
 | where (ApplicationId in (AzureAppIds)) or (ResourceId has_any (AzureAppIds))
 | where ErrorCode == 0
 | where AuthenticationRequirement == "singleFactorAuthentication"
-//| join kind=inner IdentityInfo on AccountUpn
-//| where (DistinguishedName != "OU=User Accounts") or (AccountUpn startswith "svc")
+//| join kind=inner IdentityInfo on AccountUpn //use these last two lines with MDI and Sentinel UEBA
+//| where (DistinguishedName != "OU=User Accounts") or (AccountUpn startswith "svc") //use these last two lines with MDI and Sentinel UEBA
 | project Application,ApplicationId,ResourceId,AccountUpn,AccountDisplayName,AuthenticationRequirement,ConditionalAccessStatus
 | summarize by Application,ApplicationId,ResourceId,AccountUpn,AccountDisplayName,AuthenticationRequirement,ConditionalAccessStatus
 

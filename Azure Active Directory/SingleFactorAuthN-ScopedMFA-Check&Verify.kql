@@ -1,0 +1,24 @@
+//Single Factor AuthN scoped to 'Azure Portal, CLI and PowerShell' (requires data to be sent to a LAW)
+SigninLogs
+| where TimeGenerated >= ago(90d)
+| extend AzureADApplication = AppDisplayName
+| where AppId == 'c44b4083-3bb0-49c1-b47d-974e53cbdf3c' or AppId == '04b07795-8ddb-461a-bbee-02f9e1bf7b46' or AppId == '1950a258-227b-4e31-a9cf-717495945fc2'
+| where ResultType == 0
+| where AuthenticationRequirement == "singleFactorAuthentication"
+| where ClientAppUsed == 'Browser'
+| distinct TimeGenerated, UserPrincipalName, ClientAppUsed, AzureADApplication, AppId, AuthenticationRequirement
+| sort by TimeGenerated desc
+
+
+
+//Single Factor AuthN scoped to 'Azure Portal, CLI and PowerShell'. Requires Microsoft Defender for Cloud Apps to have 0365 connected apps and "Azure AD Sign-in Events" enabled
+let AzureAppIds = dynamic(["c44b4083-3bb0-49c1-b47d-974e53cbdf3c","04b07795-8ddb-461a-bbee-02f9e1bf7b46", "1950a258-227b-4e31-a9cf-717495945fc2"]);
+AADSignInEventsBeta
+| where (ApplicationId in (AzureAppIds)) or (ResourceId has_any (AzureAppIds))
+| where ErrorCode == 0
+| where AuthenticationRequirement == "singleFactorAuthentication"
+//| join kind=inner IdentityInfo on AccountUpn
+//| where (DistinguishedName != "OU=User Accounts") or (AccountUpn startswith "svc")
+| project Application,ApplicationId,ResourceId,AccountUpn,AccountDisplayName,AuthenticationRequirement,ConditionalAccessStatus
+| summarize by Application,ApplicationId,ResourceId,AccountUpn,AccountDisplayName,AuthenticationRequirement,ConditionalAccessStatus
+

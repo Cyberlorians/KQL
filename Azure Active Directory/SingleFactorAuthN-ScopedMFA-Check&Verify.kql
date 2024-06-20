@@ -1,3 +1,17 @@
+Starting July 2024, Microsoft is set to revolutionize #CyberSecurity protocols for Azure users by enforcing Multi-Factor Authentication (MFA) for all. This game-changing move is designed to significantly reduce cyber threats and unauthorized access, providing an extra security layer beyond traditional passwords.
+
+Why MFA? A whopping 99.9% of compromised accounts didn’t use MFA. This initiative not only protects against cyber threats but aligns with major security frameworks (PCI DSS, HIPAA, GDPR, NIST).
+
+𝗚𝗼𝗼𝗱 𝗧𝗼 𝗞𝗻𝗼𝘄:
+🔹Affects Azure Portal, CLI, PowerShell, and Terraform usage.
+🔹Excludes automation accounts like service principals.
+🔹Phased rollout begins July 2024.
+🔹No opt-out; all Entra ID MFA methods supported.
+
+For break-glass accounts and service account users, shifts in strategy will be necessary to align with these new requirements.
+
+Verify below who is using SFA. If you are using Terraform, add the app ID into the strings listed.
+
 //Single Factor AuthN scoped to 'Azure Portal, CLI and PowerShell' (requires data to be sent to a LAW)
 SigninLogs
 | where TimeGenerated >= ago(90d)

@@ -1,0 +1,10 @@
+AuditLogs
+| where OperationName in ("Add member to group", "Remove member from group")
+| where TargetResources contains 'Exclude - BG'
+| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+| extend Target = tostring(TargetResources[0].userPrincipalName)
+| extend GroupID = tostring(TargetResources[1].id)
+| extend OldValue = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[1].oldValue)))
+| extend NewValue = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[1].newValue)))
+| extend Value = coalesce(OldValue, NewValue)
+| project TimeGenerated, Actor, OperationName, Target, GroupID, Value

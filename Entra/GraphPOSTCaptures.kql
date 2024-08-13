@@ -1,7 +1,0 @@
-
-MicrosoftGraphActivityLogs
-| where RequestMethod contains 'POST'
-| join (
-    AuditLogs
-    | extend Id = tostring(parse_json(tostring(InitiatedBy.user)).id)
-) on $left.UserId == $right.Id

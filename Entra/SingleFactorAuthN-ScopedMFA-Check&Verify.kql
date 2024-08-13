@@ -1,0 +1,49 @@
+Starting July 2024, Microsoft is set to revolutionize #CyberSecurity protocols for Azure users by enforcing Multi-Factor Authentication (MFA) for all. This game-changing move is designed to significantly reduce cyber threats and unauthorized access, providing an extra security layer beyond traditional passwords.
+
+Why MFA? A whopping 99.9% of compromised accounts didn’t use MFA. This initiative not only protects against cyber threats but aligns with major security frameworks (PCI DSS, HIPAA, GDPR, NIST).
+
+𝗚𝗼𝗼𝗱 𝗧𝗼 𝗞𝗻𝗼𝘄:
+🔹Affects Azure Portal, CLI, PowerShell, and Terraform usage.
+🔹Excludes automation accounts like service principals.
+🔹Phased rollout begins July 2024.
+🔹No opt-out; all Entra ID MFA methods supported.
+
+For break-glass accounts and service account users, shifts in strategy will be necessary to align with these new requirements.
+
+Verify below who is using SFA. If you are using Terraform, add the app ID into the strings listed. CLI and PowerShell are Listed under app 'Windows Azure Service Management API'. See article, (https://learn.microsoft.com/en-us/entra/identity/conditional-access/concept-conditional-access-cloud-apps#windows-azure-service-management-api)
+
+//Single Factor AuthN scoped to 'Azure Portal, CLI and PowerShell' (requires data to be sent to a LAW) - COMMERCIAL/GCC
+SigninLogs
+| where TimeGenerated >= ago(90d)
+| extend AzureADApplication = AppDisplayName
+| where AppId == 'c44b4083-3bb0-49c1-b47d-974e53cbdf3c' or AppId == '797f4846-ba00-4fd7-ba43-dac1f8f63013'
+| where ResultType == 0
+| where AuthenticationRequirement == "singleFactorAuthentication"
+| where ClientAppUsed == 'Browser'
+| distinct TimeGenerated, UserPrincipalName, ClientAppUsed, AzureADApplication, AppId, AuthenticationRequirement
+| sort by TimeGenerated desc
+
+//Single Factor AuthN scoped to 'Azure Portal, CLI and PowerShell' (requires data to be sent to a LAW) - GCCH/GOV
+SigninLogs
+| where TimeGenerated >= ago(90d)
+| extend AzureADApplication = AppDisplayName
+| where AppId == 'c836cbdb-7a5b-44cc-a54f-564b4b486fc6' or AppId == '797f4846-ba00-4fd7-ba43-dac1f8f63013'
+| where ResultType == 0
+| where AuthenticationRequirement == "singleFactorAuthentication"
+| where ClientAppUsed == 'Browser'
+| distinct TimeGenerated, UserPrincipalName, ClientAppUsed, AzureADApplication, AppId, AuthenticationRequirement
+| sort by TimeGenerated desc
+
+
+
+//Single Factor AuthN scoped to 'Azure Portal, CLI and PowerShell'. Requires Microsoft Defender for Cloud Apps to have 0365 connected apps and "Azure AD Sign-in Events" enabled
+let AzureAppIds = dynamic(["c44b4083-3bb0-49c1-b47d-974e53cbdf3c","04b07795-8ddb-461a-bbee-02f9e1bf7b46", "1950a258-227b-4e31-a9cf-717495945fc2"]);
+AADSignInEventsBeta
+| where (ApplicationId in (AzureAppIds)) or (ResourceId has_any (AzureAppIds))
+| where ErrorCode == 0
+| where AuthenticationRequirement == "singleFactorAuthentication"
+//| join kind=inner IdentityInfo on AccountUpn //use these last two lines with MDI and Sentinel UEBA
+//| where (DistinguishedName != "OU=User Accounts") or (AccountUpn startswith "svc") //use these last two lines with MDI and Sentinel UEBA
+| project Application,ApplicationId,ResourceId,AccountUpn,AccountDisplayName,AuthenticationRequirement,ConditionalAccessStatus
+| summarize by Application,ApplicationId,ResourceId,AccountUpn,AccountDisplayName,AuthenticationRequirement,ConditionalAccessStatus
+

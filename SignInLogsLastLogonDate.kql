@@ -1,6 +1,0 @@
-SigninLogs
-| where TimeGenerated >= ago(365d) //adjust timeframe as appropriate
-//| where //Add filters here to target specific types/groups of users or filter out accounts
-| summarize arg_max(TimeGenerated, *) by UserPrincipalName
-| project TimeGenerated, UserPrincipalName, UserType, ['Days Since Last Logon']=datetime_diff("day", now(),TimeGenerated) 
-| where ['Days Since Last Logon'] >= 30 //adjust to filter older or newer logons as needed for tighter results | sort by ['Days Since Last Logon'] desc  

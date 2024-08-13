@@ -1,0 +1,8 @@
+AuditLogs
+| where ActivityDisplayName contains "Passkey" //contains all verbiage with passkey, not just security key bound
+//| where Result != "success" //show anything but success
+| where Result == "success" //show success
+| extend AccountUPN = TargetResources[0].userPrincipalName
+| extend AAGUID = AdditionalDetails[1].value
+| extend WebAuthnInfo = AdditionalDetails[0].value
+| project TimeGenerated, AccountUPN, ActivityDisplayName, AAGUID, WebAuthnInfo

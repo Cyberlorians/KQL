@@ -1,0 +1,18 @@
+let KEV =
+externaldata(vulnerabilities: dynamic)
+[
+    h@'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json'
+]
+with(format='multijson');
+KEV
+| mv-expand vulnerabilities
+| evaluate bag_unpack(vulnerabilities)
+//| extend notes = replace_string(notes, @"\/", "/")
+| project kevCveID = cveID, notes  // rename cveID to avoid conflict in join
+| join kind=inner (
+    DeviceTvmSoftwareVulnerabilities
+    | project DeviceName, OSPlatform, cveID = CveId
+) on $left.kevCveID == $right.cveID
+| summarize ['Vulnerabilities'] = make_set(cveID) by DeviceName
+| extend ['Count of Known Exploited Vulnerabilities'] = array_length(['Vulnerabilities'])
+| sort by ['Count of Known Exploited Vulnerabilities'] desc

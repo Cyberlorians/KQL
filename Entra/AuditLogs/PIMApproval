@@ -1,0 +1,22 @@
+let ApprovalEvents = AuditLogs
+| where OperationName == "Request approved"
+| where Result == "success"
+| extend ApprovedCorrelationID = tostring(TargetResources[0].id)
+//| extend ApprovedUserUPN = tostring(TargetResources[0].userPrincipalName)
+//| extend ApprovedRole = tostring(TargetResources[0].modifiedProperties[0].newValue)
+| extend ApproverIP = tostring(AdditionalDetails[4].value)
+| project ApprovalTime = TimeGenerated, Approver = InitiatedBy.user.displayName, ApprovedCorrelationID, ApproverIP;
+let ActivationEvents = AuditLogs
+| where OperationName == "Add member to role completed (PIM activation)"
+| where Result == "success"
+| extend ActivationCorrelationID = tostring(TargetResources[1].id)
+| extend ActivatedUserUPN = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+| extend ActivatedRole = tostring(TargetResources[0].displayName)
+| project ActivationTime = TimeGenerated, ActivatedUserUPN, ActivatedRole, ActivationInitiator = InitiatedBy.user.displayName, ActivationCorrelationID;
+ApprovalEvents
+| join kind=leftouter (
+    ActivationEvents
+) on $left.ApprovedCorrelationID == $right.ActivationCorrelationID
+| project ApprovalTime, Approver, ApproverIP,
+         ActivationTime, ActivatedUserUPN, ActivatedRole, ActivationInitiator
+| order by ApprovalTime desc

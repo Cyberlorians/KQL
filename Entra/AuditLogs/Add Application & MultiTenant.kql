@@ -1,0 +1,46 @@
+// Part 1: Control Flag
+// Set this to 'true' to show only multi-tenant applications.
+// Set to 'false' to show ALL new applications.
+let showOnlyMultiTenant = false;
+//
+AuditLogs
+| where TimeGenerated > ago(90d)
+| where OperationName == "Add application"
+//
+// ----- Part 2: Safe Parsing -----
+| mv-expand Target = todynamic(TargetResources)
+| extend Properties = todynamic(Target.modifiedProperties)
+| mv-expand Property = Properties
+| extend PropName = tostring(Property.displayName), PropValue = tostring(Property.newValue)
+| summarize
+    arg_max(TimeGenerated, *),
+    MtaValue = take_anyif(PropValue, PropName == "AvailableToOtherTenants"),
+    AppIdValue = take_anyif(PropValue, PropName == "AppId")
+    by CorrelationId, AppObjectId = tostring(Target.id)
+//
+// ----- Part 3: Analysis & Enrichment -----
+| extend
+    IsMultiTenant = coalesce(tostring(todynamic(MtaValue)[0]) == 'true', false),
+    InitiatorInfo = todynamic(InitiatedBy),
+    TargetInfo = todynamic(Target)
+| extend
+    Status = Result,
+    InitiatorType = case(
+        isnotempty(InitiatorInfo.user.userPrincipalName), "User",
+        isnotempty(InitiatorInfo.app.displayName), "Application",
+        "Other"
+    ),
+    Initiator = coalesce(
+        tostring(InitiatorInfo.user.userPrincipalName),
+        tostring(InitiatorInfo.app.displayName)
+    ),
+    InitiatorIpAddress = tostring(InitiatorInfo.user.ipAddress)
+//
+// ----- Part 4: Flexible Filtering -----
+| where showOnlyMultiTenant == false or IsMultiTenant == true
+//
+// ----- Part 5: Final Output -----
+// This section now uses a single-line distinct operator with the reordered columns.
+| distinct TimeGenerated, OperationName, Status, InitiatorType, Initiator, InitiatorIpAddress, IsMultiTenant, TargetSpName = tostring(TargetInfo.displayName), TargetSpAppId = tostring(todynamic(AppIdValue)[0]), TargetSpId = AppObjectId
+| sort by TimeGenerated desc
+| take 1000

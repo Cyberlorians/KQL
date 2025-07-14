@@ -1,0 +1,34 @@
+﻿// Objective: Tracks user account deletions in Windows Active Directory via SecurityEvent logs (Event ID 4726), with full initiator and target detail.
+// For best results, set SACLs on critical OUs/groups to ensure this event is always logged.
+//
+//-----Part 0: Analyst Targeting-----
+// Set arrays below to filter by user, initiator, or computer fragments (case-insensitive, partial match). Leave empty for all results.
+let TargetUsers = dynamic([]);      // e.g., ["svc_", "admin", "MSOL"]
+let Initiators = dynamic([]);       // e.g., ["adminuser", "mcrane"]
+let TargetComputers = dynamic([]);  // e.g., ["gccadds02", "azurearc"]
+//
+//-----Part 1: Event Filtering-----
+// Only look at user deletions (Event ID 4726), and filter to last 90 days.
+//
+SecurityEvent
+// GPO Path: To capture 4726 events, enable the following:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > DS Access > Audit Directory Service Changes (Success/Failure)
+//   Note: SACLs must be set on key OUs/groups to audit deletion events.
+//
+| where TimeGenerated > ago(30d)
+| where EventID == 4726
+| where Activity == "4726 - A user account was deleted."
+//
+//-----Part 2: Flexible Filtering-----
+// Allow partial/fragment search for deleted username, initiator, or computer.
+//
+| where (array_length(TargetUsers) == 0 or tolower(TargetUserName) has_any (TargetUsers) or tolower(TargetAccount) has_any (TargetUsers))
+| where (array_length(Initiators) == 0 or tolower(SubjectUserName) has_any (Initiators) or tolower(SubjectAccount) has_any (Initiators))
+| where (array_length(TargetComputers) == 0 or tolower(Computer) has_any (TargetComputers))
+//
+//-----Part 3: Analyst Output-----
+// Distinct single-row per event, only key fields for clarity.
+//
+| distinct TimeGenerated, Deleter=SubjectUserName, DeleterAccount=SubjectAccount, DeletedUser=TargetUserName, DeletedAccount=TargetAccount, Computer, Activity
+| sort by TimeGenerated desc
+| take 100

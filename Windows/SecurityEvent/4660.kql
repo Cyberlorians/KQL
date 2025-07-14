@@ -1,0 +1,67 @@
+﻿// ----- Precursor Query: Find a Deletion Event ----- 
+// RUN THIS SECTION FIRST, put cursor on line 16 run and pull HandleId and/or SID to continue with next section on line 18.
+// This section finds recent deletion events. Run this first to find a HandleId to investigate.
+// GPO Path: To capture this event, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Object Access > Audit File System (Success)
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 4660
+| extend EventData_xml = parse_xml(EventData)
+| project TimeGenerated, Computer, Activity,
+    SubjectUserSid = tostring(EventData_xml.EventData.Data[0]['#text']),
+    SubjectUserName = tostring(EventData_xml.EventData.Data[1]['#text']),
+    HandleId = tostring(EventData_xml.EventData.Data[5]['#text']),
+    ProcessId = tostring(EventData_xml.EventData.Data[6]['#text']),
+    ProcessName = tostring(EventData_xml.EventData.Data[7]['#text'])
+| sort by TimeGenerated desc
+
+// Objective: Investigates file deletion events (Event ID 4660) in Windows SecurityEvent logs, allowing analysts to pivot on HandleId and user SIDs for forensic investigation, and join with file access events for additional detail.
+// 
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To investigate specific users, add their SIDs to this list. Leave empty to ignore.
+let targetedSids = dynamic([""]); // Example: dynamic(["S-1-5-..."])
+// To investigate a specific deletion event, paste the HandleId here. Leave empty to ignore. Focus on HandleId first.
+let targetedHandleId = ""; // Example: "0x1a4"
+//
+// ----- Part 1: Gather Deletion Events (4660) -----
+// GPO Path: To capture this event, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Object Access > Audit File System (Success)
+let DeletionConfirmations = SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID == 4660
+| extend EventData_xml = parse_xml(EventData)
+| extend
+    SubjectUserSid = tostring(EventData_xml.EventData.Data[0]['#text']),
+    SubjectUserName = tostring(EventData_xml.EventData.Data[1]['#text']),
+    HandleId = tostring(EventData_xml.EventData.Data[5]['#text']),
+    ProcessId = tostring(EventData_xml.EventData.Data[6]['#text']),
+    ProcessName = tostring(EventData_xml.EventData.Data[7]['#text'])
+| where not(ProcessName has_any ("SenseIR.exe", "MsSense.exe"));
+//
+// ----- Part 2: Gather Object Access Details (4663) -----
+// GPO Path: To capture this event, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Object Access > Audit File System (Success, Failure)
+let FileDetails = SecurityEvent
+| where TimeGenerated > ago(7d)
+| where EventID == 4663 and isnotempty(ObjectName)
+| project
+    ObjectName, SubjectUserSid_4663 = SubjectUserSid, Computer_4663 = Computer,
+    ProcessId_4663 = ProcessId, HandleId_4663 = HandleId;
+//
+// ----- Part 3: Joining, Filtering, and Final Output -----
+// Apply filters based on the parameters set in Part 0. Join with file details to get the ObjectName.
+DeletionConfirmations
+| where (array_length(targetedSids) == 0 or SubjectUserSid in (targetedSids))
+| where (isempty(targetedHandleId) or HandleId == targetedHandleId)
+| join kind=inner (FileDetails) on $left.Computer == $right.Computer_4663 and
+     $left.ProcessId == $right.ProcessId_4663 and $left.HandleId == $right.HandleId_4663 and
+     $left.SubjectUserSid == $right.SubjectUserSid_4663
+| extend 
+    IsTargetedSid = SubjectUserSid in (targetedSids),
+    IsTargetedHandleId = not(isempty(targetedHandleId)) and HandleId == targetedHandleId
+//
+// ----- Part 4: Final Output -----
+// Clean, deduplicated, and sorted for analyst review.
+| summarize arg_max(TimeGenerated, SubjectUserName, Computer, ProcessName, ObjectName, HandleId, Activity, IsTargetedSid, IsTargetedHandleId) by SubjectUserSid, ObjectName
+| sort by TimeGenerated desc
+| take 50

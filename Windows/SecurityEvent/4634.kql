@@ -1,0 +1,46 @@
+﻿// Objective: Correlates RDP logon/logoff events (4624/4634, LogonType 10) in Windows SecurityEvent logs to build user session timelines and durations, with flexible filtering by user SID.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// ----- Part 1: Gather RDP Logoff Events -----
+// GPO Path: To capture 4634 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Logon/Logoff > Audit Logon (Success) and Audit Logoff (Success)
+let RDP_Logoffs =
+    SecurityEvent
+    | where TimeGenerated > ago(14d)
+    | where EventID == 4634
+    | where LogonType == 10
+    | project LogoffTime = TimeGenerated, Computer, TargetUserName, TargetUserSid, TargetLogonId, LogoffActivity = Activity;
+//
+// ----- Part 2: Gather RDP Logon Events -----
+// GPO Path: To capture 4624 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Logon/Logoff > Audit Logon (Success) and Audit Logoff (Success)
+let RDP_Logons =
+    SecurityEvent
+    | where TimeGenerated > ago(14d)
+    | where EventID == 4624
+    | where LogonType == 10
+    | project LogonTime = TimeGenerated, Source_IP = IpAddress, Source_Computer = ClientName, TargetLogonId, LogonActivity = Activity;
+//
+// ----- Part 3: Join, Filter, and Enrich Data -----
+// Join logons to logoffs and enrich with session duration and targeting.
+RDP_Logoffs
+| join kind=inner RDP_Logons on TargetLogonId
+| summarize
+    LogonTime = min(LogonTime),
+    LogoffTime = max(LogoffTime),
+    LogonActivity = take_any(LogonActivity),
+    LogoffActivity = take_any(LogoffActivity)
+    by User = TargetUserName, UserSid = TargetUserSid, RDP_Server = Computer, Source_Computer, Source_IP
+| extend SessionDuration = LogoffTime - LogonTime
+| where array_length(Targeted_User_SIDs) == 0 or UserSid in (Targeted_User_SIDs)
+| extend IsTargetedUser = UserSid in (Targeted_User_SIDs)
+//
+// ----- Part 4: Final Output -----
+// Clean, deduplicated session table for review.
+| project LogonTime, LogoffTime, SessionDuration, User, UserSid, IsTargetedUser, RDP_Server, Source_Computer, Source_IP, LogonActivity, LogoffActivity
+| sort by LogonTime desc
+| take 50

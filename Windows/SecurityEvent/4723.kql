@@ -1,0 +1,28 @@
+﻿// Objective: Detects attempted password changes for privileged or targeted accounts on Windows (SecurityEvent, EventID 4723).
+// Useful for auditing password changes on sensitive accounts to support early detection of credential abuse.
+//
+// ----- Part 0: Optional Targeting -----
+// Leave empty for all results, or add SAMAccountNames for privileged targets.
+//
+let TargetUsers = dynamic([]);   // e.g., ["admin", "svcaccount", "priv users"]
+let InitiatingUsers = dynamic([]); // e.g., ["helpdesk1", "admin"]
+//
+// ----- Part 1: Filter for 4723 Password Change Attempts -----
+//
+SecurityEvent
+// GPO Path: To capture 4723 events (password change attempts), enable the following:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Audit Policy > Account Management > Audit User Account Management (Success/Failure)
+| where TimeGenerated > ago(30d)
+| where EventID == 4723
+| where Activity == "4723 - An attempt was made to change an account's password."
+//
+// ----- Part 2: Optional Targeting (on initiator and/or target user) -----
+//
+| where (array_length(TargetUsers) == 0 or TargetUserName in (TargetUsers))
+| where (array_length(InitiatingUsers) == 0 or SubjectUserName in (InitiatingUsers))
+//
+// ----- Part 3: Friendly Output and Security Recommendations -----
+//
+| distinct TimeGenerated, ['Initiated By'] = SubjectUserName, ['Target User'] = TargetUserName, Computer, ['Domain'] = SubjectDomainName, ['Event Record'] = EventRecordId, Activity
+| sort by TimeGenerated desc
+| take 100

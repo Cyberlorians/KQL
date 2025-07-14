@@ -1,0 +1,31 @@
+﻿// Objective: Audit and investigate the installation or removal of storage volumes/removable media (Event ID 6416) for compliance and operations.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+//
+// ----- Part 1: Filter for 6416 Events -----
+// GPO Path: To capture 6416 events, you must enable:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Object Access > Audit Removable Storage (Success)
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 6416
+| where Activity == "6416 - A new external device was recognized by the System"
+//
+// ----- Part 2: Flexible Filtering for Targeted Accounts -----
+// This applies the filter ONLY if the Targeted_User_SIDs list is not empty.
+| where array_length(Targeted_User_SIDs) == 0 or SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 3: Analysis & Enrichment -----
+// Adds flags for USB storage, targeted users, and anomalous actors.
+| extend
+    IsUsbStorageDevice = (ClassName == "USB" or DeviceDescription has "USB Mass Storage"),
+    IsTargetedUser = SubjectUserSid in (Targeted_User_SIDs),
+    IsAnomalousActor = (SubjectUserSid != "S-1-5-18")
+//
+// ----- Part 4: Final Output -----
+// This section creates a table of device connection events with all flags.
+| distinct TimeGenerated, IsTargetedUser, IsAnomalousActor, SubjectUserName, SubjectUserSid, Computer, DeviceDescription, ClassName, VendorIds, HardwareIds, IsUsbStorageDevice, Activity
+| sort by TimeGenerated desc
+| take 50

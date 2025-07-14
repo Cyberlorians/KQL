@@ -1,0 +1,36 @@
+﻿// Objective: Tracks initial network share connections (Event ID 5140) in Windows SecurityEvent logs, enabling filtering by user SID, flagging external access and admin share connections.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// ----- Part 1: Filter for Relevant 5140 Events -----
+// GPO Path: To capture 5140 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Object Access > Audit File Share (Success, Failure)
+// Note: This event tracks the initial connection to a network share.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 5140
+| where Activity == "5140 - A network share object was accessed."
+//
+// ----- Part 2: Custom Filtering -----
+// Exclude common system/service accounts.
+| where not(SubjectUserName has_any ('MSOL', '$'))
+//
+// ----- Part 3: Flexible Filtering for Targeted Accounts -----
+// Only include SIDs in the analyst list, if set.
+| where array_length(Targeted_User_SIDs) == 0 or SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Analyst enrichment flags for targeting, external access, and admin shares.
+| extend
+    IsTargetedUser = SubjectUserSid in (Targeted_User_SIDs),
+    IsExternalAccess = not(ipv4_is_private(IpAddress)),
+    IsAdminShareAccess = ShareName endswith "$"
+//
+// ----- Part 5: Final Output -----
+// Unique share access events, sorted for review.
+| distinct TimeGenerated, SubjectUserName, SubjectUserSid, IsTargetedUser, Computer, ShareName, ShareLocalPath, IpAddress, IsExternalAccess, IsAdminShareAccess, Activity
+| sort by TimeGenerated desc
+| take 50

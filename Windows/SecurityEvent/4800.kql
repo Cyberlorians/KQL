@@ -1,0 +1,33 @@
+﻿// Objective: Tracks workstation lock events (Event ID 4800) in Windows SecurityEvent logs, enabling targeted filtering by user SID and monitoring when users lock their workstations.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// ----- Part 1: Filter for Relevant 4800 Events -----
+// GPO Path: To capture 4800 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Logon/Logoff > Audit Other Logon/Logoff Events (Success)
+// Note: This event tracks when a user locks their workstation.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 4800
+| where Activity == "4800 - The workstation was locked."
+//
+// ----- Part 2: Custom Filtering -----
+// Exclude common service accounts or other noise from the results.
+| where not(TargetUserName has_any ('svc', 'MSOL', '$')) // <-- EDIT THIS LIST to exclude accounts
+//
+// ----- Part 3: Flexible Filtering for Targeted Accounts -----
+// This applies the filter ONLY if the Targeted_User_SIDs list is not empty.
+| where array_length(Targeted_User_SIDs) == 0 or TargetUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Analyst targeting flag.
+| extend IsTargetedUser = TargetUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 5: Final Output -----
+// Unique workstation lock events, sorted for review.
+| distinct TimeGenerated, IsTargetedUser, Computer, Actor=TargetUserName, ActorSid=TargetUserSid, Activity
+| sort by TimeGenerated desc
+| take 50

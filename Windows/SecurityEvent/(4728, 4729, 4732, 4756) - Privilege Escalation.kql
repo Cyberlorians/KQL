@@ -1,0 +1,52 @@
+// Objective: Detects adds or removes to/from sensitive groups in Windows environments, flagging changes that may indicate privilege escalation or delegation.
+// Focuses on critical/sensitive groups (customizable).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// List sensitive groups, actions, or actors to target. Leave arrays empty for all.
+let SensitiveGroups = dynamic([
+    "Domain Admins",
+    "Enterprise Admins",
+    "Administrators",
+    "Account Operators",
+    "Server Operators",
+    "Backup Operators",
+    "Schema Admins"
+    // Add others as needed
+]);
+let TargetActions = dynamic([]); // Example: dynamic(["Add to Global Group"])
+let TargetActors = dynamic([]);  // Example: dynamic(["username"])
+//
+// ----- Part 1: Filter for Security-Impactful Events -----
+// Only group membership change event IDs.
+//
+SecurityEvent
+| where TimeGenerated > ago(30d)
+| where EventID in (4728, 4729, 4732, 4756)
+//
+// ----- Part 2: Parse and Clean Output -----
+// Handles machine/service accounts, user accounts, and filters for sensitive groups.
+//
+| extend
+    Action = case(
+        EventID == 4728, "Add to Global Group",
+        EventID == 4729, "Remove from Global Group",
+        EventID == 4732, "Add to Local Group",
+        EventID == 4756, "Add to Universal Group",
+        "Other"
+    ),
+    Group = TargetUserName,
+    MemberClean = iff(MemberName == "-" or isnull(MemberName), "N/A", MemberName)
+//
+// ----- Part 3: Apply Targeting Filters -----
+// Optionally filters for action or actor.
+//
+| where (array_length(SensitiveGroups) == 0 or Group in (SensitiveGroups))
+| where (array_length(TargetActions) == 0 or Action in (TargetActions))
+| where (array_length(TargetActors) == 0 or SubjectAccount in (TargetActors))
+//
+// ----- Part 4: Output Review-Ready Results -----
+// Surfaces key context for each group membership change event.
+//
+| project TimeGenerated, Action, Group, Member = MemberClean, Actor = SubjectAccount, EventID, Computer, Activity
+| sort by TimeGenerated desc
+| take 100

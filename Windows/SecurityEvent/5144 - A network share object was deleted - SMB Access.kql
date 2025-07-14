@@ -1,0 +1,36 @@
+﻿// Objective: Tracks network share deletions (Event ID 5144) in Windows SecurityEvent logs, with filtering by user SID, and flags for admin shares and risky system paths.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// ----- Part 1: Filter for Relevant 5144 Events -----
+// GPO Path: To capture 5144 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Object Access > Audit File Share (Success)
+// Note: This event is critical for tracking when network shares are removed, which could be a malicious attempt to disrupt services.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 5144
+| where Activity == "5144 - A network share object was deleted."
+//
+// ----- Part 2: Custom Filtering -----
+// Exclude common system/service accounts.
+| where not(SubjectUserName has_any ('MSOL', '$'))
+//
+// ----- Part 3: Flexible Filtering for Targeted Accounts -----
+// Only include SIDs in the analyst list, if set.
+| where array_length(Targeted_User_SIDs) == 0 or SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Flags for targeting, admin shares, and risky paths.
+| extend
+    IsTargetedUser = SubjectUserSid in (Targeted_User_SIDs),
+    IsAdminShare = ShareName endswith "$",
+    IsRiskyPath = (ShareLocalPath in~ ("C:\\", "C:\\Windows", "C:\\Windows\\System32"))
+//
+// ----- Part 5: Final Output -----
+// Unique share deletion events, sorted for review.
+| distinct TimeGenerated, SubjectUserName, SubjectUserSid, IsTargetedUser, Computer, ShareName, ShareLocalPath, IsAdminShare, IsRiskyPath, Activity
+| sort by TimeGenerated desc
+| take 50

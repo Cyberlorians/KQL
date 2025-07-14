@@ -1,0 +1,51 @@
+﻿// Objective: Tracks privileged service calls (Event ID 4673) in Windows SecurityEvent logs, enabling targeted filtering by privileged user SID, and highlighting potentially suspicious privilege use and attack surface activity.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// This list should be customized with the SIDs of user accounts you consider privileged.
+let Privileged_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// This list contains privileges that are often abused by attackers (e.g., for credential dumping).
+let SuspiciousPrivileges = dynamic([
+    "SeDebugPrivilege",
+    "SeLoadDriverPrivilege",
+    "SeTcbPrivilege"
+]);
+// 
+// ----- Part 1: Filter for Relevant 4673 Events & Data Parsing -----
+// GPO Path: To capture 4673 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Privilege Use > Audit Sensitive Privilege Use
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 4673
+| where Activity == "4673 - A privileged service was called."
+| extend EventData_xml = parse_xml(EventData)
+| extend
+    SubjectUserSid = tostring(EventData_xml.EventData.Data[0]['#text']),
+    SubjectUserName = tostring(EventData_xml.EventData.Data[1]['#text']),
+    SubjectDomainName = tostring(EventData_xml.EventData.Data[2]['#text']),
+    SubjectLogonId = tostring(EventData_xml.EventData.Data[3]['#text']),
+    Service = tostring(EventData_xml.EventData.Data[4]['#text']),
+    ServiceName = tostring(EventData_xml.EventData.Data[5]['#text']),
+    PrivilegeList = tostring(EventData_xml.EventData.Data[6]['#text']),
+    ProcessId = tostring(EventData_xml.EventData.Data[7]['#text']),
+    ProcessName = tostring(EventData_xml.EventData.Data[8]['#text'])
+//
+// ----- Part 2: Custom & Privileged Filtering -----
+// Exclude common service accounts or other noise from the results.
+| where not(SubjectUserName has_any ('svc', 'MSOL', '$')) // <-- EDIT THIS LIST to exclude accounts
+//
+// ----- Part 3: Flexible Filtering for Privileged Accounts -----
+// Apply analyst-driven SID filtering if used.
+| where array_length(Privileged_User_SIDs) == 0 or SubjectUserSid in (Privileged_User_SIDs)
+//
+// ----- Part 4: Analysis & Threat Hunting -----
+// Enrichment flags for privilege use and suspicious privilege hunting.
+| extend
+    IsPrivilegedUse = true,
+    IsTargetedUser = SubjectUserSid in (Privileged_User_SIDs),
+    IsHighlySuspiciousUse = (PrivilegeList has_any (SuspiciousPrivileges) and not(ProcessName has_any ("C:\\Windows\\System32\\lsass.exe", "C:\\Windows\\System32\\wininit.exe")))
+//
+// ----- Part 5: Final Output -----
+// Unique privileged service call events, sorted for review.
+| distinct TimeGenerated, IsTargetedUser, IsPrivilegedUse, IsHighlySuspiciousUse, SubjectUserName, SubjectUserSid, Computer, Service, ProcessName, PrivilegeList, Activity
+| sort by TimeGenerated desc
+| take 50

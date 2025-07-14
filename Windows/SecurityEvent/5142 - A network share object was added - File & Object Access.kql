@@ -1,0 +1,35 @@
+﻿// Objective: Tracks new network share creation events (Event ID 5142) in Windows SecurityEvent logs, enabling targeted filtering by user SID and surfacing high-risk shares for potential unauthorized data exposure or malware staging.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// ----- Part 1: Filter for Relevant 5142 Events -----
+// GPO Path: To capture 5142 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Object Access > Audit File Share (Success, Failure)
+// Note: This event is critical for detecting potentially unauthorized data sharing or malware staging areas.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 5142
+| where Activity == "5142 - A network share object was added."
+//
+// ----- Part 2: Custom Filtering -----
+// This section now actively hunts for high-risk shares based on the documentation's recommendations.
+| where ShareLocalPath has_any ("C:\\", "C:\\Windows", "C:\\Windows\\System32") // Alert on shares pointing to the root drive or system folders 
+or ShareName matches regex @"\w+\$$" // Also alert on recreation of hidden administrative shares (e.g., C$, ADMIN$)
+| where not(SubjectUserName has_any ('svc', 'MSOL', '$')) // <-- EDIT THIS LIST to exclude known service accounts
+//
+// ----- Part 3: Flexible Filtering for Targeted Accounts -----
+// This applies the filter ONLY if the Targeted_User_SIDs list is not empty.
+| where array_length(Targeted_User_SIDs) == 0 or SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Flag events where the user is in the analyst's targeted list.
+| extend IsTargetedUser = SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 5: Final Output -----
+// This section creates a clean, readable table of high-risk share creation events.
+| distinct TimeGenerated, IsTargetedUser, Computer, Actor=SubjectUserName, SubjectUserSid, ShareName, SharePath=ShareLocalPath, Activity
+| sort by TimeGenerated desc
+| take 50

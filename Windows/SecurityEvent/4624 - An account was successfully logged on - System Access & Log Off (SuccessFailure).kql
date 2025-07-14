@@ -1,0 +1,55 @@
+﻿// Objective: Tracks all successful user logon activity (Event ID 4624) in Windows SecurityEvent logs, enabling targeted filtering by user SID and highlighting anonymous logons.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// ----- Part 1: Filter for Relevant 4624 Events -----
+// GPO Path: To capture 4624 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Logon/Logoff > Audit Logon (Success)
+// Note: This is the primary event for tracking all successful user logon activity.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 4624
+| where Activity == "4624 - An account was successfully logged on."
+| where AccountType == "User"
+//
+// ----- Part 2: Custom Filtering -----
+// Exclude common service accounts by name.
+| where not(TargetUserName has_any ('svc', 'MSOL', '$'))
+//
+// ----- Part 3: Flexible Filtering for Targeted Accounts -----
+// This applies the filter ONLY if the Targeted_User_SIDs list is not empty.
+| where array_length(Targeted_User_SIDs) == 0 or TargetUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Add logon type, authentication protocol, and analyst targeting/anonymous flags.
+| extend 
+    LogonTypeName = case(
+        LogonType == 2, "Interactive (Console)",
+        LogonType == 3, "Network",
+        LogonType == 4, "Batch",
+        LogonType == 5, "Service",
+        LogonType == 7, "Unlock",
+        LogonType == 8, "NetworkCleartext",
+        LogonType == 9, "NewCredentials",
+        LogonType == 10, "RemoteInteractive (RDP)",
+        LogonType == 11, "CachedInteractive",
+        "Other"
+    ),
+    AuthenticationProtocol = case(
+        TargetUserName == "ANONYMOUS LOGON", "N/A (Anonymous Logon)",
+        AuthenticationPackageName == "NTLM" and PackageName == "LM", "LM (Legacy)",
+        AuthenticationPackageName == "NTLM" and PackageName == "NTLM V1", "NTLMv1",
+        AuthenticationPackageName == "NTLM" and PackageName == "NTLM V2", "NTLMv2",
+        AuthenticationPackageName
+    ),
+    IsTargetedUser = TargetUserSid in (Targeted_User_SIDs),
+    IsAnonymousLogon = (TargetUserName == "ANONYMOUS LOGON")
+//
+// ----- Part 5: Final Output -----
+// Output distinct, sorted, and enriched logon activity.
+| distinct TimeGenerated, IsTargetedUser, IsAnonymousLogon, TargetUserName, TargetUserSid, Computer, LogonTypeName, AuthenticationProtocol, IpAddress, Activity
+| sort by TimeGenerated desc
+| take 50

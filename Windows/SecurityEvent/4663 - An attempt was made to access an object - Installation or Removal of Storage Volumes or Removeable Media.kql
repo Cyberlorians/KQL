@@ -1,0 +1,34 @@
+﻿// Objective: Audits access to objects on removable storage devices using Event ID 4663, focusing on actions performed by user accounts on drives D:–Z: (typically removable media).
+//
+// ----- Part 1: Define Targeted Users -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// GPO Path: To capture this event for removable storage, you must enable:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Object Access > Audit Removable Storage (Success, Failure)
+// Note: This event requires a SACL on the files/folders to be audited.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 4663
+| where Activity == "4663 - An attempt was made to access an object."
+//
+// ----- Part 2: Custom Filtering -----
+// This filter focuses only on actions taken by user accounts.
+| where AccountType == 'User'
+// ADDED: This filter focuses only on objects on drives other than C:, which typically represent removable media.
+| where ObjectName matches regex @"^[D-Z]:\\"
+//
+// ----- Part 3: Flexible Filtering for Targeted Accounts -----
+// This applies the filter ONLY if the Targeted_User_SIDs list is not empty.
+| where array_length(Targeted_User_SIDs) == 0 or SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// This flag is useful for identifying a targeted user when viewing all results.
+| extend IsTargetedUser = SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 5: Final Output -----
+// This section presents the unique access events, sorted by the most recent time.
+| distinct TimeGenerated, IsTargetedUser, Account, SubjectUserSid, ObjectName, ObjectType, Computer, Activity
+| sort by TimeGenerated desc
+| take 50

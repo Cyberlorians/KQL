@@ -1,0 +1,42 @@
+﻿// Objective: Tracks logoff events (Event ID 4634) by privileged accounts in Windows SecurityEvent logs, enabling targeted filtering by SID and reporting on privileged user session terminations.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Define privileged account SIDs for focused analysis. Leave empty to include all accounts.
+let Privileged_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// ----- Part 1: Filter for Relevant 4634 Events -----
+// GPO Path: To capture 4634 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Logon/Logoff > Audit Logoff (Success)
+// Note: This event is generated when a logon session is terminated.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 4634
+| where Activity == "4634 - An account was logged off."
+| where AccountType == "User"
+//
+// ----- Part 2: Custom Filtering -----
+// Exclude common service and system accounts.
+| where not(TargetUserName has_any ('MSOL', 'svc', '$'))
+//
+// ----- Part 3: Flexible Filtering for Privileged Accounts -----
+// Apply analyst-driven SID filtering if used.
+| where array_length(Privileged_User_SIDs) == 0 or TargetUserSid in (Privileged_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Enrichment fields for investigation and privileged logoff flag.
+| extend
+    IsPrivilegedLogoff = TargetUserSid in (Privileged_User_SIDs),
+    LogonTypeName = case(
+        LogonType == 2, "Interactive (Console)",
+        LogonType == 3, "Network",
+        LogonType == 10, "RemoteInteractive (RDP)",
+        LogonType == 4, "Batch",
+        LogonType == 5, "Service",
+        "Other"
+    )
+//
+// ----- Part 5: Final Output -----
+// Unique privileged logoff events, sorted for review.
+| distinct TimeGenerated, IsPrivilegedLogoff, TargetUserName, TargetUserSid, Computer, LogonTypeName, LogonProcessName, Activity
+| sort by TimeGenerated desc
+| take 50

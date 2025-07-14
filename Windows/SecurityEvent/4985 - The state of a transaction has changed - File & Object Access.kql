@@ -1,0 +1,36 @@
+﻿// Objective: Tracks file system transaction state changes (Event ID 4985) in Windows SecurityEvent logs, enabling targeted filtering by user SID and focusing on informational activity from the Transaction Manager.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// ----- Part 1: Filter for Relevant 4985 Events -----
+// GPO Path: To capture all 4985 events, enable one of the relevant subcategories:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Object Access > Audit File System
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Privilege Use > Audit Non Sensitive Privilege Use
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Privilege Use > Audit Other Privilege Use Events
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Privilege Use > Audit Sensitive Privilege Use
+// Note: This is an informational event from the file system Transaction Manager and typically has no security relevance. It's primarily used for troubleshooting.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 4985
+| where Activity == "4985 - The state of a transaction has changed."
+//
+// ----- Part 2: Custom Filtering -----
+// This is the filter from your original query to focus only on user accounts.
+| where AccountType == 'User'
+//
+// ----- Part 3: Flexible Filtering for Targeted Accounts -----
+// This applies the filter ONLY if the Targeted_User_SIDs list is not empty.
+| where array_length(Targeted_User_SIDs) == 0 or SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Flag events where the user is in the analyst's targeted list.
+| extend IsTargetedUser = SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 5: Final Output -----
+// This section presents the unique transaction state change events, as originally requested.
+| distinct TimeGenerated, IsTargetedUser, SubjectAccount, SubjectUserSid, Computer, ProcessId, ProcessName, Activity
+| sort by TimeGenerated desc
+| take 50

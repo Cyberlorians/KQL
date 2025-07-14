@@ -1,0 +1,58 @@
+﻿// Objective: Tracks all failed user logon activity (Event ID 4625) in Windows SecurityEvent logs, enabling targeted filtering by user name and surfacing potential brute-force, password spray, and user enumeration attacks.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their user names inside the brackets.
+let Targeted_User_Names = dynamic([]); // Example: dynamic(["administrator", "testuser"])
+// 
+// ----- Part 1: Filter for Relevant 4625 Events -----
+// GPO Path: To capture 4625 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Logon/Logoff > Audit Logon (Failure)
+// Note: This is a critical event for detecting brute-force, password spray, and user enumeration attacks.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 4625
+| where Activity == "4625 - An account failed to log on."
+| where AccountType == "User"
+//
+// ----- Part 2: RDP & Custom Filtering -----
+// Temporarily disabled this filter to see all logon types.
+//| where LogonType == 10
+// Exclude common service accounts and known system accounts.
+| where not(TargetUserName has_any ('svc', 'MSOL', '$', 'himds'))
+//
+// ----- Part 3: Flexible Filtering for Targeted Accounts -----
+// This applies the filter ONLY if the Targeted_User_Names list is not empty.
+| where array_length(Targeted_User_Names) == 0 or TargetUserName in (Targeted_User_Names)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Add logon type, failure reason, and analyst targeting flags.
+| extend
+    LogonTypeName = case(
+        LogonType == 2, "Interactive (Console)",
+        LogonType == 3, "Network",
+        LogonType == 4, "Batch",
+        LogonType == 5, "Service",
+        LogonType == 7, "Unlock",
+        LogonType == 8, "NetworkCleartext",
+        LogonType == 9, "NewCredentials",
+        LogonType == 10, "RemoteInteractive (RDP)",
+        LogonType == 11, "CachedInteractive",
+        "Other"
+    ),
+    FailureReason = case(
+        SubStatus == "0xc000006a", "Bad Password",
+        SubStatus == "0xc0000064", "Bad Username",
+        SubStatus == "0xc0000234", "Account Locked Out",
+        SubStatus == "0xc0000072", "Account Disabled",
+        SubStatus == "0xc000006f", "Logon Outside Authorized Hours",
+        SubStatus == "0xc0000070", "Unauthorized Workstation",
+        "Other Failure"
+    ),
+    IsTargetedUser = TargetUserName in (Targeted_User_Names)
+//
+// ----- Part 5: Final Output -----
+// Output distinct, sorted, and enriched failed logon activity.
+| distinct TimeGenerated, IsTargetedUser, TargetUserName, Computer, LogonProcessName, LogonTypeName, LogonType, FailureReason, IpAddress, Status, SubStatus, Activity
+| sort by TimeGenerated desc
+| take 50

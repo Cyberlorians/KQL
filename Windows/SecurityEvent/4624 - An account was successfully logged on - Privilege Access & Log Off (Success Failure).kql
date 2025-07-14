@@ -1,0 +1,49 @@
+﻿// Objective: Tracks successful logons (Event ID 4624) by privileged accounts in Windows SecurityEvent logs, enabling targeted filtering by SID and reporting on privileged user logon activity.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Define privileged account SIDs for focused analysis. Leave empty to include all accounts.
+let Privileged_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// ----- Part 1: Filter for Relevant 4624 Events -----
+// GPO Path: To capture 4624 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Logon/Logoff > Audit Logon (Success)
+// Note: This query focuses on successful logons by defined privileged accounts.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 4624
+| where Activity == "4624 - An account was successfully logged on."
+| where AccountType == "User"
+//
+// ----- Part 2: Custom Filtering -----
+// Exclude common service accounts and ANONYMOUS LOGON.
+| where not(TargetUserName has_any ('svc', 'MSOL', '$', 'ANONYMOUS LOGON'))
+//
+// ----- Part 3: Flexible Filtering for Privileged Accounts -----
+// Apply analyst-driven SID filtering if used.
+| where array_length(Privileged_User_SIDs) == 0 or TargetUserSid in (Privileged_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Enrichment fields for investigation and privileged logon flag.
+| extend
+    IsPrivilegedLogon = TargetUserSid in (Privileged_User_SIDs),
+    LogonTypeName = case(
+        LogonType == 2, "Interactive (Console)",
+        LogonType == 3, "Network",
+        LogonType == 4, "Batch",
+        LogonType == 5, "Service",
+        LogonType == 10, "RemoteInteractive (RDP)",
+        "Other"
+    ),
+    AuthenticationProtocol = case(
+        AuthenticationPackageName == "NTLM" and PackageName == "LM", "LM (Legacy)",
+        AuthenticationPackageName == "NTLM" and PackageName == "NTLM V1", "NTLMv1",
+        AuthenticationPackageName == "NTLM" and PackageName == "NTLM V2", "NTLMv2",
+        AuthenticationPackageName
+    )
+//
+// ----- Part 5: Final Output -----
+// Unique privileged logon events, sorted for review.
+| distinct TimeGenerated, IsPrivilegedLogon, TargetUserName, TargetUserSid, Computer, LogonTypeName, AuthenticationProtocol, IpAddress, Activity
+| sort by TimeGenerated desc
+| take 50
+

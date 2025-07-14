@@ -1,0 +1,36 @@
+﻿// Objective: Tracks network share access events (Event ID 5140) in Windows SecurityEvent logs, enabling targeted filtering by user SID and hunting for access to high-value administrative shares.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// ----- Part 1: Filter for Relevant 5140 Events -----
+// GPO Path: To capture 5140 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Object Access > Audit File Share (Success, Failure)
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 5140
+| where Activity == "5140 - A network share object was accessed."
+//
+// ----- Part 2: Custom Filtering -----
+// This section now filters for high-value shares and can be edited to exclude known safe IP ranges.
+// The documentation recommends monitoring for access to sensitive shares.
+| where ShareName has_any ("C$", "ADMIN$") // <-- EDIT THIS LIST for sensitive shares
+// The documentation also recommends monitoring for access from unexpected IP addresses.
+// | where not(ipv4_is_in_range(IpAddress, "192.168.1.0/24", "10.0.0.0/8")) // <-- UNCOMMENT AND EDIT with your internal IP ranges
+| where AccountType == 'User'
+//
+// ----- Part 3: Flexible Filtering for Targeted Accounts -----
+// This applies the filter ONLY if the Targeted_User_SIDs list is not empty.
+| where array_length(Targeted_User_SIDs) == 0 or SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Flag events where the user is in the analyst's targeted list.
+| extend IsTargetedUser = SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 5: Final Output -----
+// This section presents the filtered list of potentially suspicious share access events.
+| distinct TimeGenerated, IsTargetedUser, SubjectUserName, SubjectUserSid, Computer, IpAddress, IpPort, ObjectType, ShareName, Activity
+| sort by TimeGenerated desc
+| take 50

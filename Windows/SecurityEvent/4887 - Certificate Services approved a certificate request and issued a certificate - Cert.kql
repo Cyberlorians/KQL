@@ -1,0 +1,74 @@
+﻿// Objective: Tracks all certificate issuance events from Windows AD Certificate Services (EventID 4887 via SecurityEvent), including requester, disposition, subject, and issuing CA—supports compliance and monitoring of certificate approvals.
+//
+// Reference: 
+//   Official Microsoft auditing guidance for AD CS:
+//   https://learn.microsoft.com/en-us/defender-for-identity/deploy/configure-windows-event-collection#configure-auditing-on-ad-cs
+//
+//   To capture these events, ensure:
+//   - The "Issue and manage certificate requests" audit setting is enabled on the CA
+//   - The Certificate Services audit subcategory is enabled (via auditpol)
+//   - EventID 4887 is being forwarded/collected
+//
+// ----- Part 0: Optional Filtering (substring/wildcard match) -----
+// Leave TargetRequesters as "" for all; set a value for substring match (case-sensitive).
+let TargetRequesters = "";             // E.g., "user", "svc", "adm"
+let IssuingCAs = dynamic([]);          // E.g., ["FULL Issuing CA Name"]
+//
+// ----- Part 1: Search for AD CS Certificate Issuance Events (4887) -----
+//
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 4887
+| where Activity == "4887 - Certificate Services approved a certificate request and issued a certificate."
+// Parse out EventData XML, flatten one row per event.
+| extend EventXML = parse_xml(EventData).EventData.Data
+| mv-expand bagexpansion=array EventXML
+| extend
+    EventName = tostring(EventXML["@Name"]),
+    EventValue = tostring(EventXML["#text"])
+// Summarize to one row per cert event.
+| summarize
+    RequestId = anyif(EventValue, EventName == "RequestId"),
+    Requester = anyif(EventValue, EventName == "Requester"),
+    Attributes = anyif(EventValue, EventName == "Attributes"),
+    Disposition = anyif(EventValue, EventName == "Disposition"),
+    SubjectKeyIdentifier = anyif(EventValue, EventName == "SubjectKeyIdentifier"),
+    Subject = anyif(EventValue, EventName == "Subject"),
+    Computer = any(Computer),
+    TimeGenerated = max(TimeGenerated)
+    by EventRecordId
+//
+// ----- Part 2: Apply Optional Targeting -----
+//
+| where (array_length(IssuingCAs) == 0 or Computer in (IssuingCAs))
+| where (TargetRequesters == "" or Requester contains TargetRequesters)
+//
+// ----- Part 3: Friendly Disposition Label -----
+// Maps disposition code to text per Microsoft docs.
+//
+| extend
+    DispositionReason = case(
+        Disposition == "0", "Incomplete (Not Completed)",
+        Disposition == "1", "Error (Failed)",
+        Disposition == "2", "Denied",
+        Disposition == "3", "Issued",
+        Disposition == "4", "Issued Out-of-Band",
+        Disposition == "5", "Under Submission",
+        Disposition == "6", "Revoked",
+        isnull(Disposition), "Unknown",
+        "Unknown"
+    )
+//
+// ----- Part 4: Classify Certificate Type & Flag Targeted Requesters -----
+// Uses Requester (endswith "$") to detect machine certs.
+// Adds IsTargetedRequester (true if substring is matched; always true if filter not set).
+//
+| extend
+    CertType = iff(isnotempty(Requester) and Requester endswith "$", "Machine", "User"),
+    IsTargetedRequester = iif(isnotempty(TargetRequesters), Requester contains TargetRequesters, false)
+//
+// ----- Part 5: Final Output -----
+//
+| project TimeGenerated, IsTargetedRequester, RequestId, Requester, CertType, Subject, SubjectKeyIdentifier, Disposition, DispositionReason, Attributes, ['Issuing-CA'] = Computer
+| sort by TimeGenerated desc
+| take 50

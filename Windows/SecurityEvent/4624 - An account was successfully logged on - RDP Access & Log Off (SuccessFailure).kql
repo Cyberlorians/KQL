@@ -1,0 +1,42 @@
+﻿// Objective: Tracks successful RDP logons (Event ID 4624, LogonType 10) in Windows SecurityEvent logs, enabling targeted filtering by user SID and reporting on interactive remote logons.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-...", "S-1-5-..."])
+// 
+// ----- Part 1: Filter for Relevant 4624 Events (RDP Only) -----
+// GPO Path: To capture 4624 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Logon/Logoff > Audit Logon (Success)
+// Note: This query filters for LogonType == 10 to specifically track successful RDP logons.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 4624
+| where Activity == "4624 - An account was successfully logged on."
+| where LogonType == 10 and AccountType == "User"
+//
+// ----- Part 2: Custom Filtering -----
+// Exclude common service and system accounts, including ANONYMOUS LOGON.
+| where not(TargetUserName has_any ('svc', 'MSOL', '$', 'ANONYMOUS LOGON'))
+//
+// ----- Part 3: Flexible Filtering for Targeted Accounts -----
+// This line correctly applies the filter ONLY if the Targeted_User_SIDs list is not empty.
+| where array_length(Targeted_User_SIDs) == 0 or TargetUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Enrichment for protocol and analyst targeting.
+| extend 
+    LogonTypeName = "RemoteInteractive (RDP)",
+    AuthenticationProtocol = case(
+        AuthenticationPackageName == "NTLM" and PackageName == "LM", "LM (Legacy)",
+        AuthenticationPackageName == "NTLM" and PackageName == "NTLM V1", "NTLMv1",
+        AuthenticationPackageName == "NTLM" and PackageName == "NTLM V2", "NTLMv2",
+        AuthenticationPackageName
+    ),
+    IsTargetedUser = TargetUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 5: Final Output -----
+// Unique RDP logon events, sorted for review.
+| distinct TimeGenerated, IsTargetedUser, TargetUserName, TargetUserSid, Computer, LogonTypeName, AuthenticationProtocol, IpAddress, Activity
+| sort by TimeGenerated desc
+| take 50

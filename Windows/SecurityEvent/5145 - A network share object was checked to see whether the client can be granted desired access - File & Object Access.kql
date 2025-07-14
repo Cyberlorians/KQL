@@ -1,0 +1,33 @@
+﻿// Objective: Tracks detailed network share access events (Event ID 5145) in Windows SecurityEvent logs, enabling targeted filtering by user SID and hunting for non-service account file/folder accesses within network shares.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// ----- Part 1: Filter for Relevant 5145 Events -----
+// GPO Path: To capture 5145 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Object Access > Audit Detailed File Share (Success, Failure)
+// Note: This event generates each time a file or folder within a network share is accessed. It can be very high volume.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 5145
+| where Activity == "5145 - A network share object was checked to see whether the client can be granted desired access."
+//
+// ----- Part 2: Custom Filtering -----
+// This section now includes a filter to exclude common service or system accounts.
+| where not(SubjectUserName has_any ("svc", "$")) // <-- EDIT THIS LIST to exclude accounts by name
+//
+// ----- Part 3: Flexible Filtering for Targeted Accounts -----
+// This applies the filter ONLY if the Targeted_User_SIDs list is not empty.
+| where array_length(Targeted_User_SIDs) == 0 or SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Flag events where the user is in the analyst's targeted list.
+| extend IsTargetedUser = SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 5: Final Output -----
+// This section presents the unique detailed share access events, as originally requested.
+| distinct TimeGenerated, IsTargetedUser, SubjectUserName, SubjectUserSid, Computer, IpAddress, IpPort, ObjectType, ShareLocalPath, ShareName, Activity
+| sort by TimeGenerated desc
+| take 50

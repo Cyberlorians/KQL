@@ -1,0 +1,35 @@
+﻿// Objective: Tracks network share modification events (Event ID 5143) in Windows SecurityEvent logs, enabling targeted filtering by user SID and surfacing potentially unauthorized changes to high-value shares.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// To see all activity, leave the list empty: dynamic([])
+// To target specific users, add their SIDs inside the brackets.
+let Targeted_User_SIDs = dynamic([]); // Example: dynamic(["S-1-5-..."])
+// 
+// ----- Part 1: Filter for Relevant 5143 Events -----
+// GPO Path: To capture 5143 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Object Access > Audit File Share (Success, Failure)
+// Note: This event is critical for tracking permission changes or other modifications to sensitive shares, which could be an attempt to weaken security.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 5143
+| where Activity == "5143 - A network share object was modified."
+//
+// ----- Part 2: Custom Filtering -----
+// This section actively hunts for modifications to high-value shares, per documentation recommendations.
+// | where ShareName has_any ("SYSVOL", "NETLOGON") or ShareName matches regex @"\w+\$$" // <-- Focus on critical and administrative shares
+| where not(SubjectUserName has_any ('svc', 'MSOL', '$')) // <-- EDIT THIS LIST to exclude known service accounts
+//
+// ----- Part 3: Flexible Filtering for Targeted Accounts -----
+// This applies the filter ONLY if the Targeted_User_SIDs list is not empty.
+| where array_length(Targeted_User_SIDs) == 0 or SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Flag events where the user is in the analyst's targeted list.
+| extend IsTargetedUser = SubjectUserSid in (Targeted_User_SIDs)
+//
+// ----- Part 5: Final Output -----
+// This section creates a clean, readable table of high-risk share modification events.
+| distinct TimeGenerated, IsTargetedUser, Actor=SubjectUserName, SubjectUserSid, Computer, ShareName, SharePath=ShareLocalPath, Activity
+| sort by TimeGenerated desc
+| take 50
+

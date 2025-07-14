@@ -1,0 +1,32 @@
+﻿// Objective: Tracks audit log clear events (Event ID 1102) in Windows SecurityEvent logs, enabling targeted filtering by computer. Clearing the audit log is a high-severity event that can indicate attempts to erase evidence of attacker activity.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Filter by Computer. Leave array empty to include all computers.
+let TargetComputers = dynamic([]); // Example: dynamic(["SERVER01","SERVER02"])
+// 
+// ----- Part 1: Filter for Relevant 1102 Events & Parse Data -----
+// GPO Path: To capture 1102 events, you must enable the following subcategory:
+// - Computer Configuration > Policies > Windows Settings > Security Settings > Advanced Audit Policy Configuration > System > Audit Other System Events (Success)
+// Note: This is a high-severity event that can indicate an attacker is trying to erase evidence of their activity.
+SecurityEvent
+| where TimeGenerated > ago(14d)
+| where EventID == 1102
+| where Activity == "1102 - The audit log was cleared."
+| extend EventData_xml = parse_xml(EventData)
+| extend
+    SubjectUserSid = tostring(EventData_xml.UserData.LogFileCleared.SubjectUserSid),
+    SubjectUserName = tostring(EventData_xml.UserData.LogFileCleared.SubjectUserName)
+//
+// ----- Part 2: Flexible Filtering for Targeted Computers -----
+// This applies the filter ONLY if the TargetComputers list is not empty.
+| where array_length(TargetComputers) == 0 or Computer in (TargetComputers)
+//
+// ----- Part 3: Analysis & Enrichment -----
+// This flag is useful for identifying a targeted computer when viewing all results.
+| extend IsTargetedComputer = Computer in (TargetComputers)
+//
+// ----- Part 4: Final Output -----
+// Unique audit log clear events, sorted for review.
+| distinct TimeGenerated, IsTargetedComputer, Computer, Actor=SubjectUserName, ActorSid=SubjectUserSid, Activity
+| sort by TimeGenerated desc
+| take 50

@@ -1,0 +1,18 @@
+// Objective: Total ingestion size per MDO table over last 7 days (human-readable).
+// ----- Part 1: Define MDO tables -----
+let MDOTables = dynamic([
+    "EmailEvents",
+    "UrlClickEvents",
+    "EmailAttachmentInfo",
+    "EmailUrlInfo",
+    "EmailPostDeliveryEvents"
+]);
+// ----- Part 2: Calculate total ingestion size per table -----
+Usage
+| where TimeGenerated > ago(7d)
+| where DataType in (MDOTables)
+| summarize 
+    TotalSizeMB = round(sum(Quantity) / 1024, 2),
+    TotalSizeGB = round(sum(Quantity) / (1024 * 1024), 2)
+    by DataType
+| order by TotalSizeGB desc

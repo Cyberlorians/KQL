@@ -1,0 +1,23 @@
+// Objective: Total ingestion size per MDE table over last 7 days (human-readable).
+// ----- Part 1: Define MDE tables -----
+let MDETables = dynamic([
+    "DeviceInfo",
+    "DeviceNetworkInfo",
+    "DeviceProcessEvents",
+    "DeviceNetworkEvents",
+    "DeviceFileEvents",
+    "DeviceRegistryEvents",
+    "DeviceLogonEvents",
+    "DeviceImageLoadEvents",
+    "DeviceEvents",
+    "DeviceFileCertificateInfo"
+]);
+// ----- Part 2: Calculate total ingestion size per table -----
+Usage
+| where TimeGenerated > ago(7d)
+| where DataType in (MDETables)
+| summarize 
+    TotalSizeMB = round(sum(Quantity) / 1024, 2),
+    TotalSizeGB = round(sum(Quantity) / (1024 * 1024), 2)
+    by DataType
+| order by TotalSizeGB desc

@@ -1,0 +1,55 @@
+﻿// Objective: Detects sensitive group membership changes in Active Directory using Microsoft Defender for Identity (IdentityDirectoryEvents).
+//
+// ----- Part 0: Define Sensitive Group Array -----
+// Analyst: Adjust these group names for your organization's "sensitive" AD groups.
+//
+let SensitiveGroupName = pack_array(
+    'Account Operators',
+    'Administrators',
+    'Domain Admins',
+    'Backup Operators',
+    'Domain Controllers',
+    'Enterprise Admins',
+    'Enterprise Read-only Domain Controllers',
+    'Group Policy Creator Owners',
+    'Incoming Forest Trust Builders',
+    'Microsoft Exchange Servers',
+    'Network Configuration Operators',
+    'Microsoft Exchange Servers',
+    'Print Operators',
+    'Read-only Domain Controllers',
+    'Replicator',
+    'Schema Admins',
+    'Server Operators'
+);
+//
+// ----- Part 1: Filter IdentityDirectoryEvents for Adds to Sensitive Groups -----
+// Only include AD group membership changes (exclude sync/system events).
+//
+IdentityDirectoryEvents
+| where TimeGenerated > ago(30d)
+| where Application == "Active Directory"
+| where ActionType == "Group Membership changed"
+| where DestinationDeviceName != "" // Exclude AD Sync or system changes
+//
+// ----- Part 2: Extract Group Change Details from AdditionalFields -----
+// Parse the group add/remove, target account, and group information.
+//
+| extend ToGroup   = tostring(parse_json(AdditionalFields).["TO.GROUP"])         // Group added to
+| extend FromGroup = tostring(parse_json(AdditionalFields).["FROM.GROUP"])       // Group removed from
+| extend Action    = iff(isempty(ToGroup), "Remove", "Add")                      // Add or Remove action
+| extend GroupModified = iff(isempty(ToGroup), FromGroup, ToGroup)               // Unified group name
+| extend Target_Group  = tostring(parse_json(AdditionalFields).["TARGET_OBJECT.GROUP"]) // Canonical group
+//
+// ----- Part 3: Filter for Adds to Sensitive Groups Only -----
+// Only return events where the group modified is in SensitiveGroupName and is an add.
+//
+| where GroupModified in~ (SensitiveGroupName)
+| where Action == "Add"
+//
+// ----- Part 4: Final Output Projection -----
+// Show clean table of group membership adds to sensitive groups.
+//
+| project TimeGenerated, Action, GroupModified,  Target_Account = TargetAccountDisplayName, Target_UPN = TargetAccountUpn, Target_Group,  DC=DestinationDeviceName, Actor=AccountName, ActorDomain=AccountDomain, AdditionalFields
+| sort by TimeGenerated desc
+| take 50

@@ -1,0 +1,52 @@
+﻿// Objective: Detects privileged local group membership adds on endpoints in Microsoft Defender for Endpoint (DeviceEvents), including joins to newly created accounts.
+//
+// ----- Part 0: Define Sensitive Groups List -----
+// Analyst can adjust as needed for high-value domain/local groups.
+//
+let SensitiveGroupName = pack_array(
+    'Account Operators',
+    'Administrators',
+    'Domain Admins', 
+    'Backup Operators',
+    'Domain Controllers',
+    'Enterprise Admins',
+    'Enterprise Read-only Domain Controllers',
+    'Group Policy Creator Owners',
+    'Incoming Forest Trust Builders',
+    'Microsoft Exchange Servers',
+    'Network Configuration Operators',
+    'Print Operators',
+    'Read-only Domain Controllers',
+    'Replicator',
+    'Schema Admins',
+    'Server Operators'
+);
+//
+// ----- Part 1: Identify Add-to-Group Events for Sensitive Groups -----
+// Parse AdditionalFields to get group name/domain.
+//
+DeviceEvents
+| where TimeGenerated > ago(30d)
+| where ActionType contains "UserAccountAddedToLocalGroup"
+| extend Fields = parse_json(AdditionalFields)
+| extend AddToGroup = tostring(Fields.GroupName)
+| extend GroupDomainName = tostring(Fields.GroupDomainName)
+| where AddToGroup in (SensitiveGroupName) // Only sensitive group adds
+//
+// ----- Part 2: Correlate to User Creation (optional, catches newly created privileged users) -----
+// Inner join to find cases where the added account was newly created.
+//
+| join kind=inner (
+    DeviceEvents
+    | where ActionType contains "UserAccountCreated"
+    | where AccountName <> ""
+    | distinct AccountName, AccountSid
+) on AccountSid
+//
+// ----- Part 3: Final Output -----
+// Show device, action, who initiated, who was added, and what group.
+//
+| extend InitiatedActor = strcat(InitiatingProcessAccountDomain, "\\", InitiatingProcessAccountName)
+| distinct TimeGenerated, DeviceName, ActionType, InitiatedActor, AccountAdded = AccountName1, AddToGroup, GroupDomainName
+| sort by TimeGenerated desc 
+| take 50

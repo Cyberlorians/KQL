@@ -1,0 +1,27 @@
+﻿// Objective: Surfaces local device group membership changes (add/remove) in Microsoft Defender for Endpoint (DeviceEvents).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----// Leave these lists empty to see all results. Populate to filter for specific initiators or groups.
+let TargetInitiators = dynamic([]); // Example: ["adminuser", "server01$"]
+let TargetGroups = dynamic([]);     // Example: ["Remote Desktop Users", "Administrators"]
+//-----Part 1: Track Device Group Membership Activity-----
+// Captures all device events where accounts are added/removed from local groups over the last 190 days.
+DeviceEvents
+| where TimeGenerated > ago(30d)
+| where ActionType contains "group"
+//-----Part 2: Extract and Normalize Key Fields-----
+// Pulls out initiator, target group, and group details for clarity and filtering.
+| extend 
+    Initiator = tostring(InitiatingProcessAccountName),
+    InitiatorDomain = tostring(InitiatingProcessAccountDomain),
+    GroupName = tostring(parse_json(AdditionalFields).GroupName),
+    GroupDomain = tostring(parse_json(AdditionalFields).GroupDomainName),
+    GroupSid = tostring(parse_json(AdditionalFields).GroupSid)
+//-----Part 3: Apply Dynamic Filtering-----
+// If TargetInitiators or TargetGroups are empty, all records are returned. Otherwise, only matching rows are shown.
+| where (array_length(TargetInitiators) == 0 or Initiator in (TargetInitiators))
+| where (array_length(TargetGroups) == 0 or GroupName in (TargetGroups))
+//-----Part 4: Final Analyst-Friendly Output-----
+// Visualization- and report-ready: one line, clean columns.
+| distinct TimeGenerated, DeviceName, DeviceId, ReportId, Initiator, InitiatorDomain, ActionType, GroupName, GroupDomain, GroupSid
+| sort by TimeGenerated desc
+| take 500

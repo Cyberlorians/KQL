@@ -1,0 +1,72 @@
+﻿//  Objective: Tracks removal of user accounts from sensitive local groups using Microsoft Defender for Endpoint (MDE) DeviceEvents.
+// Detects deprovisioning of privileged access (ActionType: UserAccountRemovedFromLocalGroup).
+//
+// ----- Part 0: Targeting -----
+// Enriches with UEBA/IdentityInfo for context (DisplayName/UPN) on the removed SID.
+// Supports analyst-driven targeting by SID, actor, or group.
+// Useful for local admin removal, workstation/server hardening, and compliance.
+// Enriches the removed user's SID with DisplayName and UPN from IdentityInfo (UEBA).
+// Supports optional targeting by SID, actor name, and group keyword.
+//
+let TargetSIDs = dynamic([]);     // Example: ["S-1-5-21-..."]
+let ActorNames = dynamic([]);     // Example: ["xadmin"]
+let MatchGroups = dynamic([]);    // Example: ["Tier1-Admins"] Other known privileged groups
+let SensitiveGroupName = pack_array( // Known privileged groups
+    'Account Operators',
+    'Administrators',
+    'Domain Admins',
+    'Backup Operators',
+    'Domain Controllers',
+    'Enterprise Admins',
+    'Enterprise Read-only Domain Controllers',
+    'Group Policy Creator Owners',
+    'Incoming Forest Trust Builders',
+    'Microsoft Exchange Servers',
+    'Network Configuration Operators',
+    'Print Operators',
+    'Read-only Domain Controllers',
+    'Replicator',
+    'Schema Admins',
+    'Server Operators',
+    'Remote Desktop Users'
+);
+//
+// ----- Part 1: Core Filter for Local Group Removals -----
+//
+DeviceEvents
+| where TimeGenerated > ago(330d)
+| where ActionType == "UserAccountRemovedFromLocalGroup"
+//
+// ----- Part 2: Parse Fields and Identify Group Context -----
+//
+| extend Fields = parse_json(AdditionalFields)
+| extend RemoveFromGroup = tostring(Fields.GroupName)
+| extend GroupDomainName = tostring(Fields.GroupDomainName)
+//
+// ----- Part 3: Apply Group Filters (Exact + Optional Partial Match) -----
+//
+| where RemoveFromGroup in (SensitiveGroupName)
+      or (array_length(MatchGroups) == 0 or tolower(RemoveFromGroup) has_any (MatchGroups))
+//
+// ----- Part 4: Construct Actor/Target and Apply Targeting -----
+//
+| extend InitiatedActor = strcat(InitiatingProcessAccountDomain, "\\", InitiatingProcessAccountName)
+| extend TargetSID = AccountSid
+| where (array_length(TargetSIDs) == 0 or TargetSID in~ (TargetSIDs))
+| where (array_length(ActorNames) == 0 or InitiatingProcessAccountName in~ (ActorNames))
+| where InitiatedActor !contains "$" // Exclude machine/system accounts
+//
+// ----- Part 5: Enrich with Identity Info (UEBA) -----
+//
+| join kind=leftouter (
+    IdentityInfo
+    | where TimeGenerated > ago(30d)
+    | summarize arg_max(TimeGenerated, *) by AccountSID
+    | project AccountSID, AccountDisplayName, AccountUPN
+) on $left.TargetSID == $right.AccountSID
+//
+// ----- Part 6: Final Projection -----
+//
+| distinct TimeGenerated, DeviceName, ActionType, InitiatedActor, TargetSID, AccountDisplayName, AccountUPN, GroupDomainName, RemoveFromGroup
+| sort by TimeGenerated desc
+| take 50

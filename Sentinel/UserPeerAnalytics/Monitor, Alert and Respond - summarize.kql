@@ -1,0 +1,41 @@
+﻿// Objective: Presents the latest peer-based analytics for identities with detected anomalies, clearly labeling user and peer context for insider risk investigations.
+// - AnalyzedUserId: The primary user for whom peer analytics is calculated (the "subject" of analysis).
+// - PeerUserId: The unique identifier of a peer (someone with a relationship to the analyzed user, e.g., shared group, collaboration, etc.).
+// - UserDisplayName/UserUPN: Friendly display details for the analyzed user.
+// - PeerDisplayName/PeerUPN: Friendly display details for the peer.
+//
+// Rank Reference Table:
+// | Value Range | Severity | Description                                            |
+// |-------------|----------|--------------------------------------------------------|
+// | 0           | None     | No anomaly or not significant.                         |
+// | 1–29        | Low      | Minor anomaly, likely benign.                          |
+// | 30–69       | Medium   | Suspicious activity, worth monitoring.                 |
+// | 70–100      | High     | Strong indicators of compromise or risky behavior.     |
+//
+// Surfaces the most recent UserPeerAnalytics record per SourceSystem (Rank > 0), clearly labeling subject/peer context.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+let TargetSourceSystems = dynamic([]); // Example: dynamic(["Azure","OpsManager"])
+//
+// ----- Part 1: Summarize Latest UserPeerAnalytics per SourceSystem -----
+let PeerEvents =
+    UserPeerAnalytics
+    | where TimeGenerated > ago(30d)
+    | where (array_length(TargetSourceSystems) == 0 or SourceSystem in (TargetSourceSystems))
+    | where Rank > 0
+    | summarize arg_max(TimeGenerated, *) by SourceSystem;
+//
+// ----- Part 2: Resolve User and Peer Details from IdentityInfo -----
+let Identity =
+    IdentityInfo
+    | summarize arg_max(TimeGenerated, *) by AccountObjectId
+    | project AccountObjectId, AccountDisplayName, AccountUPN;
+//
+// ----- Part 3: Join Peer Events to Identities (Labeled) -----
+PeerEvents
+| join kind=leftouter (Identity) on $left.UserId == $right.AccountObjectId
+| join kind=leftouter (Identity) on $left.PeerUserId == $right.AccountObjectId
+| project TimeGenerated, SourceSystem, AnalyzedUserId = UserId, AnalyzedUserDisplayName = AccountDisplayName, AnalyzedUserUPN = AccountUPN, PeerUserId, PeerDisplayName = AccountDisplayName1, PeerUPN = AccountUPN1, Rank,
+    TenantId, AADTenantId,Type
+| sort by TimeGenerated desc
+| take 50

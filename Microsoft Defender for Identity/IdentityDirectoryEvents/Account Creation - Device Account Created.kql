@@ -1,0 +1,27 @@
+﻿// Objective: Surfaces device account creations detected by Microsoft Defender for Identity (IdentityDirectoryEvents).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave empty to return all device account creation events.
+//
+let TargetedDevices = dynamic([]);       // e.g., ["WIN-DC01", "SRV-APP01"]
+let ActorAccounts = dynamic([]);         // e.g., ["admin@domain.com"]
+//
+// ----- Part 1: Filter Defender for Identity Events -----
+// Detect when a device account is created in the directory.
+//
+IdentityDirectoryEvents
+| where TimeGenerated > ago(30d)
+| where ActionType == "Device Account Created"
+//
+// ----- Part 2: Apply Dynamic Filters -----
+// Filter on actor and target device.
+//
+| where (array_length(TargetedDevices) == 0 or TargetDeviceName in (TargetedDevices))
+| where (array_length(ActorAccounts) == 0 or tostring(AdditionalFields.["ACTOR.ACCOUNT"]) in (ActorAccounts))
+//
+// ----- Part 3: Final Output -----
+// Friendly, clean column names consistent with other queries.
+//
+| distinct TimeGenerated, ActionType, ['Initiated By'] = tostring(AdditionalFields.["ACTOR.ACCOUNT"]), ['Initiated On'] = DestinationDeviceName, ['Device Created'] = TargetDeviceName
+| sort by TimeGenerated desc
+| take 50

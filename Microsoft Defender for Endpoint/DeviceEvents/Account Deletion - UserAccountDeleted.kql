@@ -1,0 +1,21 @@
+﻿// Objective: Surfaces endpoint user account deletions from Microsoft Defender for Endpoint (DeviceEvents), with device and actor filtering.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+//
+let InitiatingAccounts = dynamic([]);   // e.g., ["admin", "system"]
+let TargetAccounts = dynamic([]);       // e.g., ["svc_", "guest"]
+let Devices = dynamic([]);              // e.g., ["server01", "workstation"]
+DeviceEvents
+// ----- Part 1: Base Filtering -----
+| where TimeGenerated > ago(30d)
+| where ActionType == "UserAccountDeleted"
+// ----- Part 2: Analyst Filtering -----
+// Allows partial/fuzzy matching via has_any on common fields.
+| where (array_length(InitiatingAccounts) == 0 or tolower(InitiatingProcessAccountName) has_any (InitiatingAccounts))
+| where (array_length(TargetAccounts) == 0 or tolower(AccountName) has_any (TargetAccounts))
+| where (array_length(Devices) == 0 or tolower(DeviceName) has_any (Devices))
+// ----- Part 3: Final Output -----
+// Shows the key fields analysts need for investigation.
+| distinct TimeGenerated, ActionType, ['Initiated By'] = InitiatingProcessAccountName, DeviceName, AccountDomain, AccountName, tostring(AdditionalFields)
+| sort by TimeGenerated desc
+| take 50

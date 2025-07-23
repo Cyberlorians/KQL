@@ -1,0 +1,47 @@
+﻿// Objective: Detects and contextualizes high-priority consent grant events in Sentinel Behavior Analytics, enriched with app and user context for triage.
+// InvestigationPriority Reference Table:
+// | Value Range | Severity | Description                                            |
+// |-------------|----------|--------------------------------------------------------|
+// | 0           | None     | No anomaly detected or not significant.                |
+// | 1–29        | Low      | Minor anomaly, likely benign.                          |
+// | 30–69       | Medium   | Suspicious activity, worth monitoring.                 |
+// | 70–100      | High     | Strong indicators of compromise or risky behavior.     |
+//
+// Detects high-priority consent grants in Sentinel BehaviorAnalytics and enriches with app context from AuditLogs.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave arrays empty to return all results.
+let TargetUPNs = dynamic([]); // Example: dynamic(["admin@domain.com"])
+//
+// ----- Part 1: Collect Consent Events from BehaviorAnalytics -----
+// Only those with InvestigationPriority > 0.
+//
+let ConsentEvents =
+    BehaviorAnalytics
+    | where TimeGenerated > ago(30d)
+    | where ActionType == "Consent to application"
+    | where InvestigationPriority > 0
+    | where (array_length(TargetUPNs) == 0 or UserPrincipalName in (TargetUPNs))
+    | project TimeGenerated, UserPrincipalName, InvestigationPriority, UserName, ActivityType, EventSource, SourceIPAddress, SourceIPLocation;
+//
+// ----- Part 2: Get Consent Grant Details from AuditLogs -----
+// Filter AuditLogs for consent events and core context.
+//
+let AuditConsent =
+    AuditLogs
+    | where TimeGenerated > ago(30d)
+    | where OperationName == "Consent to application"
+    | extend AuditTime = TimeGenerated
+    | project AuditTime, UserPrincipalName = tostring(InitiatedBy.user.userPrincipalName), AppDisplayName = tostring(TargetResources[0].displayName), ConsentedAppId = tostring(parse_json(tostring(parse_json(TargetResources)[0].modifiedProperties))[5].newValue);
+//
+// ----- Part 3: Join Behavior Analytics with AuditLogs for App Context -----
+// Join on UserPrincipalName within 5 minutes.
+//
+ConsentEvents
+| join kind=leftouter (
+    AuditConsent
+) on UserPrincipalName
+| where abs(datetime_diff('minute', TimeGenerated, AuditTime)) <= 5
+| project TimeGenerated, UserPrincipalName, UserName, AppDisplayName, ConsentedAppId, InvestigationPriority, ActivityType, EventSource, SourceIPAddress, SourceIPLocation
+| sort by TimeGenerated desc
+| take 500

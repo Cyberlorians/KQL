@@ -1,0 +1,37 @@
+﻿// Objective: Detects creation of local user accounts on Windows endpoints via Microsoft Defender for Endpoint (DeviceEvents).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave empty to return all account creation events.
+//
+let Targeted_AccountSIDs = dynamic([]);   // e.g., ["S-1-5-21-..."]
+let ActorAccounts = dynamic([]);          // e.g., ["admin", "ITops"]
+//
+// ----- Part 1: Filter DeviceEvents for Local Account Creation -----
+// Excludes known system-created account like "defaultuser1".
+//
+DeviceEvents
+| where TimeGenerated > ago(14d)
+| where ActionType == "UserAccountCreated"
+| where AccountName != "defaultuser1"
+//
+// ----- Part 2: Apply Dynamic Filters -----
+// Filter on created account SID and initiating user (if needed).
+//
+| where (array_length(Targeted_AccountSIDs) == 0 or AccountSid in (Targeted_AccountSIDs))
+| where (array_length(ActorAccounts) == 0 or InitiatingProcessAccountName in (ActorAccounts))
+//
+// ----- Part 3: Enrichment -----
+// Rename fields and flag targeted accounts.
+//
+| extend
+    TargetAccountName = AccountName,
+    TargetAccountSid = AccountSid,
+    Actor = InitiatingProcessAccountName,
+    IsTargetedUser = AccountSid in (Targeted_AccountSIDs)
+//
+// ----- Part 4: Final Output -----
+// Clean, friendly structure consistent with other queries.
+//
+| distinct TimeGenerated, IsTargetedUser, ActionType, ['Initiated On Device'] = DeviceName, Actor, TargetAccountName, TargetAccountSid, AccountDomain
+| sort by TimeGenerated desc
+| take 50

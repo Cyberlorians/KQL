@@ -1,0 +1,36 @@
+﻿// Objective: Detects privileged AD attribute changes using Microsoft Defender for Identity (IdentityDirectoryEvents, ActionType in ADAttributeChanges).
+// Supports targeted auditing of changes (passwords, delegation, group membership, UPN, etc.) on privileged accounts or devices.
+//
+// ----- Part 0: Define Targeting Arrays (empty by default) -----
+let TargetUPNs = dynamic([]);          // Example: ["admin1@domain.com", "svc-identity@domain.com"]
+let TargetDeviceNames = dynamic([]);   // Example: ["AD-DC01", "GCC-SERVER01"]
+// ----- Part 1: Define Attribute-Related MDI ActionTypes -----
+let ADAttributeChanges = dynamic([
+    "Account Constrained Delegation State Changed",
+    "Account Constrained Delegation SPNs Changed",
+    "Account Delegation Changed",
+    "Account Disabled Changed",
+    "Account Expired",
+    "Account Expiry Time Changed",
+    "Account Locked Changed",
+    "Account Password Changed",
+    "Account Password Expired",
+    "Account Password Never Expires Changed",
+    "Account Password Not Required Changed",
+    "Account Smartcard Required Changed",
+    "Account Supported Encryption Types Changed",
+    "Account Unlock changed",
+    "Account UPN Name Changed",
+    "Group Membership Changed",
+    "User Mail Changed"
+]);
+// ----- Part 2: Query IdentityDirectoryEvents for Attribute Changes -----
+IdentityDirectoryEvents
+| where TimeGenerated > ago(30d)
+| where ActionType has_any (ADAttributeChanges)
+| where (array_length(TargetUPNs) == 0 or TargetAccountUpn in (TargetUPNs))
+| where (array_length(TargetDeviceNames) == 0 or TargetDeviceName in (TargetDeviceNames))
+// ----- Part 3: Project Final Output -----
+| distinct TimeGenerated,  ActionType, Application, TargetAccountUpn, TargetAccountDisplayName, TargetDeviceName, tostring(AdditionalFields)
+| sort by TimeGenerated desc
+| take 50

@@ -1,0 +1,29 @@
+﻿// Objective: Surfaces all consent grants to Entra applications via Defender for Cloud Apps, providing visibility into cross-platform consent activity.
+// Detects consent grants to Entra applications via Microsoft Defender for Cloud Apps (CloudAppEvents).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave arrays empty to return all results.
+let TargetAccountIds = dynamic([]);     // Example: dynamic(["5f393b07-1a40-433b-bd74-b598f256b85d"])
+let TargetObjectNames = dynamic([]);    // Example: dynamic(["Microsoft Graph Command Line Tools"])
+let TargetAccountTypes = dynamic([]);   // Example: dynamic(["Admin"])
+//
+// ----- Part 1: Filter for Consent Grant Actions -----
+// Captures CloudAppEvents consent events.
+//
+CloudAppEvents
+| where TimeGenerated > ago(30d)
+| where ActionType == "Consent to application."
+//
+// ----- Part 2: Apply Targeting Filters -----
+// Optionally filters on account ID, object/app name, or account type.
+//
+| where (array_length(TargetAccountIds) == 0 or AccountId in (TargetAccountIds))
+| where (array_length(TargetObjectNames) == 0 or ObjectName in (TargetObjectNames))
+| where (array_length(TargetAccountTypes) == 0 or AccountType in (TargetAccountTypes))
+//
+// ----- Part 3: Project and Output Results -----
+// Surfaces all relevant context for consent grants.
+//
+| project TimeGenerated, AccountDisplayName, AccountId, AccountType, ObjectId, ObjectName, Application, ActionType, DeviceType, UserAgent, OSPlatform
+| sort by TimeGenerated desc
+| take 50

@@ -1,0 +1,23 @@
+﻿// Objective: Surfaces the latest behavioral analytics records by event source and activity type to support ongoing detection of identity-related anomalies.
+// Provides optional targeting on EventSource or ActivityType.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave arrays empty to return all results.
+let TargetEventSources = dynamic([]);    // Example: dynamic(["Azure AD","Azure"])
+let TargetActivityTypes = dynamic([]);   // Example: dynamic(["LogOn","Administrative"])
+//
+// ----- Part 1: Summarize Latest BehaviorAnalytics per EventSource & ActivityType -----
+// Returns the latest event (by TimeGenerated) for each EventSource/ActivityType.
+//
+BehaviorAnalytics
+| where TimeGenerated > ago(90d)
+| where (array_length(TargetEventSources) == 0 or EventSource in (TargetEventSources))
+| where (array_length(TargetActivityTypes) == 0 or ActivityType in (TargetActivityTypes))
+| summarize arg_max(TimeGenerated, *) by EventSource, ActivityType
+//
+// ----- Part 2: Project Review-Ready Fields -----
+// Analyst-focused fields from your schema.
+//
+| project TimeGenerated, EventSource, ActivityType, ActionType, UserName, UserPrincipalName, SourceIPAddress, SourceIPLocation, InvestigationPriority, UsersInsights, DevicesInsights, ActivityInsights, Type
+| sort by TimeGenerated desc
+| take 50

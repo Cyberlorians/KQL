@@ -1,0 +1,59 @@
+﻿// Objective: Detects removals from sensitive AD groups (e.g., Domain Admins, Enterprise Admins) via Microsoft Defender for Identity (IdentityDirectoryEvents).
+// Filters out sync/system events; provides full context for group deprovisioning actions affecting privileged accounts.
+//
+// ===== Part 0: Targeting (Optional Filters) =====
+//
+let TargetUPNs = dynamic([]);        // Example: ["user@domain.com"]
+let ActorUPNs = dynamic([]);         // Example: ["admin@domain.com"]
+let ActorDomains = dynamic([]);      // Example: ["DOMAIN"]
+let SensitiveGroupName = pack_array( // Groups considered privileged/sensitive
+    'Account Operators',
+    'Administrators',
+    'Domain Admins',
+    'Backup Operators',
+    'Domain Controllers',
+    'Enterprise Admins',
+    'Enterprise Read-only Domain Controllers',
+    'Group Policy Creator Owners',
+    'Incoming Forest Trust Builders',
+    'Microsoft Exchange Servers',
+    'Network Configuration Operators',
+    'Print Operators',
+    'Read-only Domain Controllers',
+    'Replicator',
+    'Schema Admins',
+    'Server Operators'
+);
+//
+// ===== Part 1: Core Filter for Group Changes =====
+//
+IdentityDirectoryEvents
+| where TimeGenerated > ago(290d)
+| where Application == "Active Directory"
+| where ActionType == "Group Membership changed"
+| where DestinationDeviceName != "" // Exclude events tied to AD Sync
+//
+// ===== Part 2: Extract Fields and Determine Action =====
+//
+| extend ToGroup = tostring(parse_json(AdditionalFields)["TO.GROUP"])
+| extend FromGroup = tostring(parse_json(AdditionalFields)["FROM.GROUP"])
+| extend Target_Group = tostring(parse_json(AdditionalFields)["TARGET_OBJECT.GROUP"])
+| extend Action = iff(isempty(ToGroup), "Remove", "Add")
+| extend GroupModified = iff(isempty(ToGroup), FromGroup, ToGroup)
+//
+// ===== Part 3: Apply Group and Action Filters =====
+//
+| where GroupModified in~ (SensitiveGroupName)
+| where Action == "Remove" // Only show deprovisioning actions
+//
+// ===== Part 4: Apply Optional Targeting Logic =====
+//
+| where (array_length(TargetUPNs) == 0 or TargetAccountUpn in~ (TargetUPNs))
+| where (array_length(ActorUPNs) == 0 or AccountName in~ (ActorUPNs))
+| where (array_length(ActorDomains) == 0 or AccountDomain in~ (ActorDomains))
+//
+// ===== Part 5: Final Projection =====
+//
+| project TimeGenerated, Action, GroupModified, Target_Account = TargetAccountDisplayName, Target_UPN = TargetAccountUpn, Target_Group, DC = DestinationDeviceName, Actor = AccountName, ActorDomain = AccountDomain, AdditionalFields
+| sort by TimeGenerated desc
+| take 50

@@ -1,0 +1,28 @@
+﻿// Objective: Extracts recent Active Directory user account creations from the hybrid IdentityInfo table in Microsoft Sentinel.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave empty to return all.
+//
+let srvcList = dynamic([]); // e.g., ["svc_m2131", "svc_backup"])
+//
+// ----- Part 1: Filter IdentityInfo from Active Directory -----
+// Pull account creation details from hybrid environment.
+//
+IdentityInfo
+| where TimeGenerated > ago(30d)
+| where SourceSystem == "ActiveDirectory"
+| where (array_length(srvcList) == 0 or AccountName in~ (srvcList))
+//
+// ----- Part 2: Enrichment -----
+// Extract Tier/OU and flag service accounts.
+//
+| extend
+    OU = extract(@"OU=([^,]+)", 1, OnPremisesDistinguishedName),
+    IsServiceAccount = tostring(AccountName) startswith "svc_"
+//
+// ----- Part 3: Final Output -----
+// Clean, enriched output with inferred context.
+//
+| distinct AccountCreationTime, AccountName, AccountUPN, IsAccountEnabled, IsServiceAccount, OU, OnPremisesDistinguishedName
+| sort by AccountCreationTime desc
+| take 50

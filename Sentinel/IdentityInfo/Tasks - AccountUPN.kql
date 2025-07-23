@@ -1,0 +1,34 @@
+﻿// Objective: Summarizes privileged user activity across Entra and Azure, filtered by user, role, or operation, to provide a unified view for investigations.// (AuditLogs, AzureActivity), filtered by users, roles, operations, and exclusions.
+// -----Part 0: Targeting -----
+let TargetUsers = dynamic([]);        // Optional filter for specific users
+let TargetRoles = dynamic([]);        // Optional filter for role names
+let OperationFilter = dynamic([]);    // Optional include filter for specific operations
+let ExcludeKeywords = dynamic(["read", "action", "Get authenticationEventListeners", "Validate user authentication"]); // Optional exclude filter
+let TableFilter = dynamic(["AuditLogs", "AzureActivity"]);  // Choose tables to include - Remove each one to view better results
+// ----- Part 1: Resolve Users with Assigned Roles -----
+let RoleUsers = IdentityInfo
+| where isnotempty(AssignedRoles)
+| mv-expand Role = AssignedRoles
+| summarize AssignedRoles = make_set(Role, 100) by AccountUPN
+| extend HasRole = array_length(TargetRoles) == 0 or AssignedRoles has_any (TargetRoles)
+| where HasRole
+| project AccountUPN, RoleList = strcat_array(AssignedRoles, ",");
+// ----- Part 2: Pull AuditLogs Operations -----
+let AuditOps = AuditLogs
+| where TimeGenerated > ago(30d)
+| where array_length(TargetUsers) == 0 or Identity in (TargetUsers)
+| project TimeGenerated, Identity, Operation = OperationName, Source = "AuditLogs";
+// ----- Part 3: Pull AzureActivity Operations -----
+let AzureOps = AzureActivity
+| where TimeGenerated > ago(30d)
+| where array_length(TargetUsers) == 0 or Caller in (TargetUsers)
+| project TimeGenerated, Identity = Caller, Operation = OperationNameValue, Source = "AzureActivity";
+// ----- Part 4: Combine, Join, and Filter -----
+union AuditOps, AzureOps
+| where Source in~ (TableFilter)
+| where array_length(OperationFilter) == 0 or Operation in~ (OperationFilter)
+| extend OperationLower = tolower(Operation)
+| where array_length(ExcludeKeywords) == 0 or not(OperationLower has_any (ExcludeKeywords))
+| join kind=inner (RoleUsers) on $left.Identity == $right.AccountUPN
+| summarize OperationCount = count() by Identity, RoleList, Operation, Source
+| order by OperationCount desc

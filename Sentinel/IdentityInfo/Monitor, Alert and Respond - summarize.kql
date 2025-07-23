@@ -1,0 +1,20 @@
+﻿// Objective: Surfaces the most recent identity information for each source system, providing up-to-date context for behavioral monitoring and investigations.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave array empty to return all results.
+let TargetSourceSystems = dynamic([]); // Example: dynamic(["OpsManager"])
+//
+// ----- Part 1: Summarize Latest Identity Records per SourceSystem -----
+// Returns the latest record (by TimeGenerated) for each SourceSystem.
+//
+IdentityInfo
+| where TimeGenerated > ago(30d)
+| where (array_length(TargetSourceSystems) == 0 or SourceSystem in (TargetSourceSystems))
+| summarize arg_max(TimeGenerated, *) by SourceSystem
+//
+// ----- Part 2: Project Review-Ready Fields -----
+// Surfaces key identity fields for review.
+//
+| project TimeGenerated, SourceSystem, AccountName, AccountUPN, AccountDisplayName, GivenName, Surname, AccountDomain, AccountSID, AccountTenantId, IsAccountEnabled, UserType, GroupMembership, AssignedRoles, AdditionalMailAddresses, ChangeSource, AccountCreationTime, UserAccountControl
+| sort by TimeGenerated desc
+| take 50

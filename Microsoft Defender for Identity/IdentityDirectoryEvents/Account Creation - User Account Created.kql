@@ -1,0 +1,27 @@
+﻿// Objective: Surfaces user account creations detected by Microsoft Defender for Identity (IdentityDirectoryEvents).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave empty to return all directory account creation events.
+//
+let TargetedUPNs = dynamic([]);          // e.g., ["user1@domain.com"]
+let ActorAccounts = dynamic([]);         // e.g., ["admin@domain.com"]
+//
+// ----- Part 1: Filter Defender for Identity Events -----
+// Detect directory-based user account creation.
+//
+IdentityDirectoryEvents
+| where TimeGenerated > ago(30d)
+| where ActionType == "User Account Created"
+//
+// ----- Part 2: Apply Dynamic Filters -----
+// Based on target UPN and actor identity.
+//
+| where (array_length(TargetedUPNs) == 0 or TargetAccountUpn in (TargetedUPNs))
+| where (array_length(ActorAccounts) == 0 or tostring(AdditionalFields.["ACTOR.ACCOUNT"]) in (ActorAccounts))
+//
+// ----- Part 3: Final Output -----
+// Friendly and enriched column names, consistent format.
+//
+| distinct TimeGenerated, ActionType, ['Initiated By'] = tostring(AdditionalFields.["ACTOR.ACCOUNT"]), ['Initiated On'] = DestinationDeviceName, TargetAccountUpn, TargetAccountDisplayName
+| sort by TimeGenerated desc
+| take 50

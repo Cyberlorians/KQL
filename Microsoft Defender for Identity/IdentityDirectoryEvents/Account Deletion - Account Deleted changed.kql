@@ -1,0 +1,31 @@
+﻿// Objective: Surfaces Active Directory account deletions detected by Microsoft Defender for Identity (IdentityDirectoryEvents), with analyst-friendly filtering for users, groups, or devices.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----// Set any of these strings to filter for user/group/device fragments; leave blank to see all deletions.
+let TargetUsers = "";    // e.g., "svc_" or "jdoe"
+let TargetGroups = "";   // e.g., "Domain Admins"
+let TargetDevices = "";  // e.g., "SRV01"
+//
+//-----Part 1: Base Filtering-----
+// Filter for AD account deletions observed by Defender for Identity in the last 90 days.
+IdentityDirectoryEvents
+| where TimeGenerated > ago(30d)
+| where ActionType == "Account Deleted changed"
+| where Application == "Active Directory"
+//
+//-----Part 2: Parse Deleted Object Types-----
+// Extract deleted user, group, and device object names from AdditionalFields.
+| extend TARGET_OBJECT_USER   = tostring(AdditionalFields.["TARGET_OBJECT.USER"])
+| extend TARGET_OBJECT_GROUP  = tostring(AdditionalFields.["TARGET_OBJECT.GROUP"])
+| extend TARGET_OBJECT_DEVICE = tostring(AdditionalFields.["TARGET_OBJECT.DEVICE"])
+//
+//-----Part 3: Analyst Filtering-----
+// Only show results where the object matches the analyst’s filters (leave blank for all).
+| where (TargetUsers == "" or TARGET_OBJECT_USER contains TargetUsers)
+| where (TargetGroups == "" or TARGET_OBJECT_GROUP contains TargetGroups)
+| where (TargetDevices == "" or TARGET_OBJECT_DEVICE contains TargetDevices)
+//
+//-----Part 4: Final Output-----
+// Columns for easy triage, sorting, or export.
+| project TimeGenerated, ActionType, Application, TARGET_OBJECT_USER, TARGET_OBJECT_GROUP, TARGET_OBJECT_DEVICE
+| sort by TimeGenerated desc
+| take 50

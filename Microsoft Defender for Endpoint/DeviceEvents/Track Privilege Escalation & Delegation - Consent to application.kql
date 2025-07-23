@@ -1,0 +1,26 @@
+﻿// Objective: Detects device-based application consent grants reported by Microsoft Defender for Endpoint, highlighting endpoint-initiated app permissions.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave arrays empty to return all results.
+let TargetDevices = dynamic([]);     // Example: dynamic(["DESKTOP-1234"])
+let TargetAccounts = dynamic([]);    // Example: dynamic(["adminuser"])
+//
+// ----- Part 1: Filter for Device Consent Events -----
+// Captures device events indicating consent grants.
+//
+DeviceEvents
+| where TimeGenerated > ago(30d)
+| where AdditionalFields.Command has "Consent to application"
+//
+// ----- Part 2: Apply Targeting Filters -----
+// Optionally filters on device name or process account name.
+//
+| where (array_length(TargetDevices) == 0 or DeviceName in (TargetDevices))
+| where (array_length(TargetAccounts) == 0 or InitiatingProcessAccountName in (TargetAccounts))
+//
+// ----- Part 3: Project and Output Results -----
+// Returns key context on device, account, process, and the consent command.
+//
+| project TimeGenerated, DeviceName, InitiatingProcessAccountName, InitiatingProcessParentFileName, ConsentCommand = tostring(AdditionalFields.Command)
+| sort by TimeGenerated desc
+| take 50

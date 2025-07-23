@@ -1,0 +1,52 @@
+﻿// Objective: Detects certificate issuance events via Microsoft Defender for Identity (IdentityDirectoryEvents, Protocol=Adcs).
+// Monitors all user and machine certificates issued by ADCS, exposing requester, subject, disposition, and attributes.
+// Useful for targeted or broad auditing of certificate issuance activity.
+//
+// ----- Part 0: Optional Targeting (substring match; leave blank for all) -----
+//
+let TargetRequesters = ""; // E.g., "priv acct", "admin", or "machine" for substring filter
+let IssuingCAs = dynamic([]); // E.g., ["issuing.gcccyberlorian.net"]
+//
+// ----- Part 1: Filter for ADCS Certificate Issuance Events in MDI -----
+//
+IdentityDirectoryEvents
+| where TimeGenerated > ago(30d)
+| where Protocol == 'Adcs'
+| where ActionType == "ADCS Certificate issuance"
+//
+// ----- Part 2: Parse AdditionalFields for Certificate Data -----
+//
+| extend AddFields = parse_json(AdditionalFields)
+| extend
+    RequestId = tostring(AddFields.RequestId),
+    Requester = tostring(AddFields.Requester),
+    Subject = tostring(AddFields.Subject),
+    SubjectKeyIdentifier = tostring(AddFields.SubjectKeyIdentifier),
+    Disposition = tostring(AddFields.Disposition),
+    Attributes = tostring(AddFields.Attributes)
+//
+// ----- Part 3: Optional Target Filtering (String "contains" match for Requester) -----
+//
+| where (array_length(IssuingCAs) == 0 or DestinationDeviceName in (IssuingCAs))
+| where (TargetRequesters == "" or Requester contains TargetRequesters)
+//
+// ----- Part 4: Friendly Disposition Label and CertType (Machine vs User) -----
+//
+| extend
+    CertType = iff(isnotempty(Requester) and Requester endswith "$", "Machine", "User")
+//
+// ----- Part 5: Final Output -----
+//
+| project TimeGenerated, RequestId, Requester, CertType, Subject, SubjectKeyIdentifier, Disposition, DispositionReason = case(
+        Disposition == "0", "Incomplete (Not Completed)",
+        Disposition == "1", "Error (Failed)",
+        Disposition == "2", "Denied",
+        Disposition == "3", "Issued",
+        Disposition == "4", "Issued Out-of-Band",
+        Disposition == "5", "Under Submission",
+        Disposition == "6", "Revoked",
+        isnull(Disposition), "Unknown",
+        "Unknown"
+    ), Attributes, ['Issuing-CA'] = DestinationDeviceName
+| sort by TimeGenerated desc
+| take 50

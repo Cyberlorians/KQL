@@ -1,0 +1,27 @@
+﻿// Objective: Flags managed identities accessing new resources in the last 7 days that were not accessed previously, identifying privilege expansion or lateral movement.
+// Useful for identifying sudden “blast radius” expansion or lateral movement.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave array empty to return all results.
+let TargetManagedIdentities = dynamic([]); // Example: dynamic(["my-managed-identity-guid"])
+//
+// ----- Part 1: Build 30-Day Resource Baseline -----
+// List each Service Principal and resource accessed in the 30–7 day baseline window.
+//
+let HistoricalAccess =
+    AADManagedIdentitySignInLogs
+    | where TimeGenerated > ago(30d) and TimeGenerated < ago(7d)
+    | where ResultType == "0"
+    | distinct ServicePrincipalId, ResourceIdentity;
+//
+// ----- Part 2: Detect New Resource Accesses in Last 7 Days -----
+// Find new ServicePrincipalId/ResourceIdentity pairs.
+//
+AADManagedIdentitySignInLogs
+| where TimeGenerated > ago(7d)
+| where ResultType == "0"
+| where array_length(TargetManagedIdentities) == 0 or ServicePrincipalId in (TargetManagedIdentities)
+| join kind=leftanti HistoricalAccess on ServicePrincipalId, ResourceIdentity
+| project TimeGenerated, ServicePrincipalId, ServicePrincipalName, ResourceIdentity, ResourceDisplayName
+| sort by TimeGenerated desc
+| take 50

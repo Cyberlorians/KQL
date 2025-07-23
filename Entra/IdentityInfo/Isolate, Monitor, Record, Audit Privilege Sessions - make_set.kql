@@ -1,0 +1,40 @@
+﻿// Objective: Maps privileged role assignments (IdentityInfo) to session activity (SigninLogs), highlighting device trust posture.
+// Tracks interactive sign-ins for privileged role holders and surfaces compliant/managed status for session auditing.
+// Supports analyst-driven targeting by user, device, or role.
+// Useful for session isolation, monitoring, and auditing of privileged accounts.
+//
+// ----- Part 0: Analyst-Driven Targeting -----
+let TargetUsers = dynamic([]);
+let TargetDevices = dynamic([]);
+let TargetRoles = dynamic([]); // Leave empty for all roles, or populate with specific ones
+// ----- Part 1: Resolve Users with Any Roles or Matching TargetRoles -----
+let RoleUsers = IdentityInfo
+| where isnotempty(AssignedRoles)
+| extend FlattenedRoles = AssignedRoles
+| mv-expand FlattenedRoles
+| summarize AssignedRoles = make_set(FlattenedRoles, 10) by AccountUPN
+| extend HasRelevantRole = iff(array_length(TargetRoles) == 0 or AssignedRoles has_any (TargetRoles), true, false)
+| where HasRelevantRole;
+// ----- Part 2: Filter Sign-ins from Privileged Role Holders -----
+SigninLogs
+| where TimeGenerated > ago(7d)
+| where isnotempty(DeviceDetail.displayName)
+| where (array_length(TargetUsers) == 0 or UserPrincipalName in (TargetUsers))
+// ----- Part 3: Join to Enrich with Roles -----
+| join kind=inner (RoleUsers) on $left.UserPrincipalName == $right.AccountUPN
+// ----- Part 4: Device Trust Posture -----
+| extend 
+    DeviceName = tostring(DeviceDetail.displayName),
+    Compliant = tostring(DeviceDetail.isCompliant),
+    Managed = tostring(DeviceDetail.isManaged)
+| where (array_length(TargetDevices) == 0 or DeviceName in (TargetDevices))
+| extend TrustStatus = case(
+    tolower(Compliant) == "true" and tolower(Managed) == "true", "Trusted",
+    tolower(Compliant) == "false" or tolower(Managed) == "false", "Untrusted",
+    "Unknown"
+)
+// ----- Part 5: Output Most Recent Session per User -----
+| summarize arg_max(TimeGenerated, *) by UserPrincipalName
+| extend Roles = strcat_array(AssignedRoles, ", ")
+| project TimeGenerated, UserPrincipalName, Identity, Roles, DeviceName, Compliant, Managed, TrustStatus
+| order by TimeGenerated desc

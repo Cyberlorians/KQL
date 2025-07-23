@@ -1,0 +1,41 @@
+﻿// Objective: Detects deleted Entra ID user accounts using AuditLogs, with initiator and target context.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Set TargetUsers to a string fragment (e.g., "jdoe", "gmail.com"); leave blank for all. InitiatorUPNs can restrict to certain actors.
+let TargetUsers = ("");    // e.g., "jdoe" or "onmicrosoft.com"
+let InitiatorUPNs = dynamic([]);  // e.g., ["admin@contoso.com"]
+//
+//-----Part 1: Base Filtering-----
+// Only include 'Delete user' operations from the last 30 days.
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName == "Delete user"
+//
+//-----Part 2: Parse and Classify Initiator Context-----
+// Expands InitiatedBy to handle users, apps, and sync types.
+| extend InitiatedByUser = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+| extend InitiatedByApp = tostring(parse_json(tostring(InitiatedBy.app)).displayName)
+| extend InitiatorType = case(
+    isnotempty(InitiatedByUser) and tolower(InitiatedByUser) has "sync", "Sync",
+    isnotempty(InitiatedByApp) and tolower(InitiatedByApp) has "sync", "Sync",
+    isnotempty(InitiatedByUser), "User",
+    isnotempty(InitiatedByApp), "Application",
+    "Unknown"
+)
+//
+//-----Part 3: Parse Target Details-----
+// Pulls UPN and object ID for deleted user from nested JSON.
+| extend TargetResource = parse_json(tostring(TargetResources))[0]
+| extend TargetUserUPN = tostring(TargetResource.userPrincipalName)
+| extend TargetObjectId = tostring(TargetResource.id)
+//
+//-----Part 4: Analyst Filtering-----
+// Supports substring match on TargetUserUPN and explicit initiator filter.
+| where (TargetUsers == "" or TargetUserUPN contains TargetUsers)
+| where (array_length(InitiatorUPNs) == 0 or InitiatedByUser in (InitiatorUPNs))
+//
+//-----Part 5: Final Output-----
+// Shows essential fields for review, one row per event.
+| distinct TimeGenerated, OperationName, Service = Identity, InitiatorType, InitiatedByUser, InitiatedByApp, Result, TargetUserUPN, TargetObjectId
+| sort by TimeGenerated desc
+| take 50

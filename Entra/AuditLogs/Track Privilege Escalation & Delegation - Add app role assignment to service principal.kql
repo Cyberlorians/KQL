@@ -1,0 +1,34 @@
+﻿
+// Objective: Detects privilege escalation by tracking app role assignments to service principals, highlighting newly delegated permissions to applications.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave arrays empty to return all results.
+//
+let TargetSPs = dynamic([]);     // Example: dynamic(["MyAppServicePrincipal"])
+let TargetActors = dynamic([]);  // Example: dynamic(["admin@contoso.com"]);
+//
+// ----- Part 1: Track Privilege Escalation via App Role Assignment to Service Principals -----
+// This identifies assignments of delegated permissions (e.g., MSGraph roles) to service principals.
+//
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName == "Add app role assignment to service principal"
+//
+// ----- Part 2: Extract Key Fields -----
+// Fixed index positions used for AppRole and SP name based on observed property structure.
+//
+| extend AppRoleAdded = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[1].newValue)))
+| extend ActorIPAddress = tostring(parse_json(tostring(InitiatedBy.user)).ipAddress)
+| extend Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+| extend ServicePrincipalName = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[6].newValue)))
+//
+// ----- Part 3: Apply Optional Targeting -----
+//
+| where (array_length(TargetSPs) == 0 or ServicePrincipalName in (TargetSPs))
+| where (array_length(TargetActors) == 0 or Actor in (TargetActors))
+//
+// ----- Part 4: Final Output -----
+//
+| distinct TimeGenerated, OperationName, AppRoleAdded, ServicePrincipalName, Actor, ActorIPAddress
+| sort by TimeGenerated desc
+| take 50

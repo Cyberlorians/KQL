@@ -1,0 +1,66 @@
+﻿// Objective: Tracks privileged role provisioning (add/remove) actions in Entra ID using AuditLogs, with initiator, role, and group details.
+//
+// ----- Part 0: Analyst-Driven Targeting (optional) -----
+// Filter for specific users, apps, or roles. Leave arrays empty for all.
+//
+let TargetUsers = dynamic([]);      // Example: dynamic(["jdoe@contoso.com"])
+let TargetApps  = dynamic([]);      // Example: dynamic(["MyAutomationApp"])
+let TargetRoles = dynamic([]);      // Example: dynamic(["Global Administrator"])
+//
+// ----- Part 1: Filter for Privileged Role Provisioning Events -----
+// Only process AuditLog events that include privileged "role" actions.
+//
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName contains "role"
+//
+// ----- Part 2: Parse Initiator and Target Details -----
+// Expand out initiator (user or app) and flatten each TargetResource.
+//
+| extend InitiatedByUser = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+| extend InitiatedByApp  = tostring(parse_json(tostring(InitiatedBy.app)).displayName)
+| extend InitiatorType   = case(
+    isnotempty(InitiatedByUser), "User",
+    isnotempty(InitiatedByApp), "Application",
+    "Other"
+)
+| mv-apply TargetResource = parse_json(tostring(TargetResources)) on (
+    extend 
+        ResourceType = tostring(TargetResource.type),
+        ResourceDisplayName = tostring(TargetResource.displayName),
+        ResourceUPN = tostring(TargetResource.userPrincipalName),
+        ResourceId = tostring(TargetResource.id)
+)
+//
+// ----- Part 3: Summarize to Group by Event -----
+// For each event, extract relevant names for Role, Group, and Target User UPN.
+//
+| summarize 
+    RoleName        = anyif(ResourceDisplayName, ResourceType == "Role"),
+    GroupName       = anyif(ResourceDisplayName, ResourceType == "Other"),
+    TargetUserUPN   = anyif(ResourceUPN, ResourceType == "User"),
+    TargetResourceId= anyif(ResourceId, ResourceType == "Role"),
+    GroupId         = anyif(ResourceId, ResourceType == "Other")
+    by TimeGenerated, OperationName, InitiatorType, InitiatedByUser, InitiatedByApp, Category, AADOperationType, Result
+//
+// ----- Part 4: Null Handling for Readability -----
+// Convert any empty extracted columns to "N/A" for clarity.
+//
+| extend 
+    RoleName      = iif(isempty(RoleName), "N/A", RoleName),
+    GroupName     = iif(isempty(GroupName), "N/A", GroupName),
+    TargetUserUPN = iif(isempty(TargetUserUPN), "N/A", TargetUserUPN)
+//
+// ----- Part 5: Apply Analyst Targeting (optional) -----
+// Use targeting arrays to filter for specific users, apps, or roles.
+//
+| where (array_length(TargetUsers) == 0 or TargetUserUPN in~ (TargetUsers))
+| where (array_length(TargetApps)  == 0 or InitiatedByApp in~ (TargetApps))
+| where (array_length(TargetRoles) == 0 or RoleName in~ (TargetRoles))
+//
+// ----- Part 6: Final Output -----
+// Clean, analyst-friendly table of recent PIM provisioning actions.
+//
+| distinct TimeGenerated, OperationName, InitiatorType, InitiatedByUser, InitiatedByApp, RoleName, GroupName, TargetUserUPN, Category, AADOperationType, Result
+| sort by TimeGenerated desc
+| take 50

@@ -1,0 +1,25 @@
+﻿// Objective: Detects SCIM/provisioning-based Entra ID account deletions via AADProvisioningLogs, with filtering for initiating app and result status.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Populate TargetApps with app fragments to filter; leave empty to show all.
+let TargetApps = dynamic([]);   // e.g., ["Workday", "ServiceNow"]
+//
+//-----Part 1: Filter for Deletions-----
+//
+AADProvisioningLogs
+| where TimeGenerated > ago(90d)
+| where ProvisioningAction == "delete"
+| extend
+    InitiatedByApp = tostring(parse_json(ServicePrincipal).Name),
+    Service = tostring(parse_json(InitiatedBy).Name),
+    TargetIdentity = tostring(TargetIdentity),
+    SourceIdentity = tostring(SourceIdentity),
+    ProvStatusInfo = tostring(ProvisioningStatusInfo)
+| where (array_length(TargetApps) == 0 or InitiatedByApp has_any (TargetApps))
+| where tolower(ResultType) in ("success", "failure")   // Only success or failure
+//
+//-----Part 2: Output for Workbook/Analyst-----
+//
+| project TimeGenerated, ProvisioningAction, InitiatedByApp, Service, ResultType, ProvStatusInfo, TargetIdentity, SourceIdentity
+| sort by TimeGenerated desc
+| take 50

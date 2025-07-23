@@ -1,0 +1,68 @@
+﻿// Objective: Detects creation of new applications in Entra ID using AuditLogs.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results.
+//
+let InitiatorUPNs = dynamic([]);       // Example: dynamic(["admin@domain.com"])
+let TargetedAppIds = dynamic([]);      // Example: dynamic(["00000003-0000-0000-c000-000000000000"])
+//
+// ----- Part 1: Control Flag -----
+// Set this to 'true' to show only multi-tenant applications.
+// Set to 'false' to show ALL new applications.
+//
+let showOnlyMultiTenant = false;
+//
+// ----- Part 2: Pre-filter Audit Logs -----
+// Only "Add application" operations in the last 30 days.
+//
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName == "Add application"
+//
+// ----- Part 3: Safe Parsing -----
+// Expand and parse dynamic fields for property extraction.
+//
+| mv-expand Target = todynamic(TargetResources)
+| extend Properties = todynamic(Target.modifiedProperties)
+| mv-expand Property = Properties
+| extend PropName = tostring(Property.displayName), PropValue = tostring(Property.newValue)
+| summarize
+    arg_max(TimeGenerated, *),
+    MtaValue = take_anyif(PropValue, PropName == "AvailableToOtherTenants"),
+    AppIdValue = take_anyif(PropValue, PropName == "AppId")
+    by CorrelationId, AppObjectId = tostring(Target.id)
+//
+// ----- Part 4: Analysis & Enrichment -----
+// Derive multi-tenancy, initiator, and status details.
+//
+| extend
+    IsMultiTenant = coalesce(tostring(todynamic(MtaValue)[0]) == 'true', false),
+    InitiatorInfo = todynamic(InitiatedBy),
+    TargetInfo = todynamic(Target)
+| extend
+    Status = Result,
+    InitiatorType = case(
+        isnotempty(InitiatorInfo.user.userPrincipalName), "User",
+        isnotempty(InitiatorInfo.app.displayName), "Application",
+        "Other"
+    ),
+    Initiator = coalesce(
+        tostring(InitiatorInfo.user.userPrincipalName),
+        tostring(InitiatorInfo.app.displayName)
+    ),
+    InitiatorIpAddress = tostring(InitiatorInfo.user.ipAddress),
+    TargetSpAppId = tostring(todynamic(AppIdValue)[0])
+//
+// ----- Part 5: Flexible Filtering -----
+// Apply multi-tenant control flag and dynamic filters.
+//
+| where showOnlyMultiTenant == false or IsMultiTenant == true
+| where (array_length(InitiatorUPNs) == 0 or Initiator in (InitiatorUPNs))
+| where (array_length(TargetedAppIds) == 0 or TargetSpAppId in (TargetedAppIds))
+//
+// ----- Part 6: Final Output -----
+// Clean, readable table of application creation events.
+//
+| distinct TimeGenerated, OperationName, Status, InitiatorType, Initiator, InitiatorIpAddress, IsMultiTenant, TargetSpName = tostring(TargetInfo.displayName), TargetSpAppId, TargetSpId = AppObjectId
+| sort by TimeGenerated desc
+| take 50

@@ -1,0 +1,38 @@
+﻿// Objective: Maps privileged role assignments (IdentityInfo) to session activity (SigninLogs), highlighting device trust posture.
+// Tracks interactive sign-ins for privileged role holders and surfaces compliant/managed status for session auditing.
+// Supports analyst-driven targeting by user, device, or role.
+// Useful for session isolation, monitoring, and auditing of privileged accounts.
+//
+// ----- Part 0: Analyst-Driven Targeting -----
+let TargetUsers = dynamic([]);
+let TargetDevices = dynamic([]);
+// ----- Part 1: Sign-ins With Trust Extracted BEFORE Join -----
+let SigninData = SigninLogs
+| where TimeGenerated > ago(30d)
+| where (array_length(TargetUsers) == 0 or UserPrincipalName in (TargetUsers))
+| extend 
+    Compliant = tostring(DeviceDetail.isCompliant),
+    Managed = tostring(DeviceDetail.isManaged),
+    DeviceName = tostring(DeviceDetail.displayName)
+| extend 
+    TrustStatus = case(
+        Compliant =~ "true" and Managed =~ "true", "Trusted",
+        Compliant =~ "false" or Managed =~ "false", "Untrusted",
+        "Unknown"
+    )
+| project SigninTime = TimeGenerated, UserPrincipalName, Identity, DeviceName, Compliant, Managed, TrustStatus;
+// ----- Part 2: Filter Role Operations from AuditLogs -----
+let RoleOps = AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName has "role"
+| where TargetResources has "role"
+| extend Actor = tostring(InitiatedBy.user.userPrincipalName)
+| project AuditTime = TimeGenerated, Actor, OperationName, Result;
+// ----- Part 3: Temporal Join and Final Output -----
+SigninData
+| join kind=inner (RoleOps) on $left.UserPrincipalName == $right.Actor
+| where datetime_diff("minute", AuditTime, SigninTime) between (0 .. 15)
+| summarize arg_max(AuditTime, *) by UserPrincipalName
+| project TimeGenerated = AuditTime, UserPrincipalName, Identity, OperationName, Result, DeviceName, Compliant, Managed, TrustStatus
+| order by TimeGenerated desc
+| take 50

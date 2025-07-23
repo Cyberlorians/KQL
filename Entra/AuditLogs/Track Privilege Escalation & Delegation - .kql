@@ -1,0 +1,51 @@
+﻿// Objective: Detects anomalous privileged operations by surfacing new AuditLogs operation names not observed in baseline windows for early detection of suspicious changes.
+// Detects new/first-time AuditLogs operation names that were not seen in the past 14–30 days but appear in the last 7 days.
+// Used for anomaly detection in privileged or sensitive changes.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave arrays empty to return all results.
+let TargetUPNs = dynamic([]);         // Example: dynamic(["admin@domain.com"])
+let TargetActorAppIds = dynamic([]);  // Example: dynamic(["00000003-0000-0000-c000-000000000000"])
+//
+// ----- Part 1: Historical Baseline (14–30 Days Ago) -----
+// Captures expected/known operations during the baseline window.
+let existingoperations = 
+    AuditLogs
+    | where TimeGenerated between (ago(30d) .. ago(14d))
+    | distinct OperationName;
+//
+// ----- Part 2: Detect New Operations in the Past 7 Days -----
+// Filters for operations not seen in the baseline window.
+//
+AuditLogs
+| where TimeGenerated > ago(7d)
+| where OperationName !in (existingoperations)
+//
+// ----- Part 3: Extract Actor and Target Context -----
+// Includes fallback logic for app-based actions and null values.
+//
+| extend
+    ActorUPN = case(
+        isnotempty(tostring(InitiatedBy.user.userPrincipalName)), tostring(InitiatedBy.user.userPrincipalName),
+        isnotempty(tostring(InitiatedBy.app.displayName)), strcat("App: ", tostring(InitiatedBy.app.displayName)),
+        "Unknown"
+    ),
+    ActorAppId = tostring(InitiatedBy.app.appId),
+    IPAddress = coalesce(tostring(InitiatedBy.user.ipAddress), tostring(InitiatedBy.app.ipAddress)),
+    Target = tostring(TargetResources[0].displayName),
+    Result = Result
+//
+// ----- Part 4: Apply Targeting Filters -----
+// Optionally filters on UPNs or App IDs for focused review.
+//
+| where (array_length(TargetUPNs) == 0 or ActorUPN in (TargetUPNs))
+| where (array_length(TargetActorAppIds) == 0 or ActorAppId in (TargetActorAppIds))
+//
+// ----- Part 5: Summarize and Output Results -----
+// Returns high-level overview of new operations with minimal duplication.
+//
+| summarize Count = count(), SampleTime = arg_max(TimeGenerated, Target, Result, IPAddress)
+    by OperationName, Category, ActorUPN, ActorAppId
+| project OperationName, Category, ActorUPN, ActorAppId, Target, Result, IPAddress, Count, SampleTime
+| sort by Count desc
+| take 50

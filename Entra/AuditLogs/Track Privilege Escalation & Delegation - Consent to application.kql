@@ -1,0 +1,39 @@
+﻿// Objective: Reviews all Entra application consent grants—including admin and delegated consent—to surface high-risk app permissions and audit privilege delegation.
+//   - IsAdminConsent: "True" if the consent was granted by an admin (often for all users), "False" otherwise.
+//   - IsAppOnly: "True" if the consent was granted for application-only (client credentials) flows—no user context required. Example: service-to-service automation, background daemons, etc.
+//                "False" means the consent is delegated—app acts on behalf of a signed-in user.
+//   - OnBehalfOfAll: "True" means the consent applies to all users in the tenant; "False" means it applies to a specific user.
+//   - AppDisplayName: The name of the application being granted consent.
+//   - ConsentedAppId: The Application (Client) ID of the app receiving consent.
+//   - PermissionsList: List of permission scopes/roles granted (e.g., "Directory.Read.All", "User.ReadWrite.All").
+// Reviews all consent grants by Entra Audit Logs (OperationName = "Consent to application").
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave arrays empty to return all results.
+let TargetUPNs = dynamic([]); // Example: dynamic(["admin@domain.com"])
+let TargetApps = dynamic([]); // Example: dynamic(["Microsoft Graph Command Line Tools"])
+//
+// ----- Part 1: Filter for Consent Grant Events -----
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName == "Consent to application"
+| extend InitiatedByUPN = tostring(InitiatedBy.user.userPrincipalName)
+| extend AppDisplayName = tostring(TargetResources[0].displayName)
+| where (array_length(TargetUPNs) == 0 or InitiatedByUPN in (TargetUPNs))
+| where (array_length(TargetApps) == 0 or AppDisplayName in (TargetApps))
+//
+// ----- Part 2: Parse Key Consent Properties -----
+| extend MP = parse_json(tostring(parse_json(tostring(parse_json(TargetResources)[0].modifiedProperties))))
+| extend
+    IsAdminConsent = tostring(MP[0].newValue),
+    IsAppOnly = tostring(MP[1].newValue),
+    OnBehalfOfAll = tostring(MP[2].newValue),
+    PermissionsRaw = tostring(MP[4].newValue),
+    ConsentedAppId = tostring(MP[5].newValue)
+//
+// ----- Part 3: Extract Scopes from PermissionsRaw -----
+| extend PermissionsMatch = extract(@'Scope: ([^,]+)', 1, PermissionsRaw)
+| extend PermissionsList = split(PermissionsMatch, " ")
+| project TimeGenerated, InitiatedByUPN, AppDisplayName, ConsentedAppId, IsAdminConsent, IsAppOnly, OnBehalfOfAll, PermissionsList
+| sort by TimeGenerated desc
+| take 50

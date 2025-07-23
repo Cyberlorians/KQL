@@ -1,0 +1,73 @@
+﻿// Objective: Correlates MicrosoftGraphActivityLogs and AuditLogs to identify creation of new applications and service principals in Entra ID.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave empty to show all results.
+//
+let InitiatorUPNs = dynamic([]);       // Example: dynamic(["admin@domain.com"])
+let TargetedAppIds = dynamic([]);      // Example: dynamic(["00000003-0000-0000-c000-000000000000"])
+//
+// ----- Part 1: Pre-filter Microsoft Graph Activity Logs -----
+// Only POST requests to /servicePrincipals in the last 30 days.
+//
+MicrosoftGraphActivityLogs
+| where TimeGenerated > ago(30d)
+| where RequestMethod == 'POST'
+| where RequestUri has '/servicePrincipals'
+//
+// ----- Part 2: Join with AuditLogs for "Add application" events -----
+// Extracts and normalizes initiator and target details, and ensures AppId is captured from both AdditionalDetails and modifiedProperties.
+//
+| join kind=inner (
+    AuditLogs
+    | where TimeGenerated > ago(30d)
+    | where OperationName == "Add application"
+    | extend InitiatorInfo = todynamic(InitiatedBy)
+    | extend TargetSpInfo = todynamic(TargetResources)[0]
+    | extend InitiatingUserId = tostring(InitiatorInfo.user.id)
+    | mv-apply Detail = todynamic(AdditionalDetails) on (
+        where Detail.key == "AppId"
+        | project TargetSpAppId = tostring(Detail.value)
+    )
+    | extend ModifiedProps = TargetSpInfo.modifiedProperties
+    | mv-apply prop = ModifiedProps on (
+        where prop.displayName == "AppId"
+        | extend AppIdFromProps = tostring(parse_json(prop.newValue)[0])
+    )
+    | extend TargetSpAppId = coalesce(TargetSpAppId, AppIdFromProps)
+    | extend
+        Status = Result,
+        FailureReason = tostring(ResultSignature),
+        InitiatorType = case(
+            isnotempty(InitiatorInfo.user.userPrincipalName), "User",
+            isnotempty(InitiatorInfo.app.displayName), "Application",
+            tostring(InitiatorInfo.identity) has_cs "Microsoft", "Microsoft Service",
+            "Other"
+        ),
+        Initiator = coalesce(
+            tostring(InitiatorInfo.user.userPrincipalName),
+            tostring(InitiatorInfo.app.displayName),
+            tostring(InitiatorInfo.identity)
+        ),
+        InitiatorIpAddress = tostring(InitiatorInfo.user.ipAddress),
+        TargetSpName = tostring(TargetSpInfo.displayName),
+        TargetSpId = tostring(TargetSpInfo.id)
+    | project AuditTimeGenerated = TimeGenerated, OperationName, Status, FailureReason, InitiatorType, Initiator, InitiatorIpAddress, TargetSpName, TargetSpAppId, TargetSpId, InitiatingUserId
+) on $left.UserId == $right.InitiatingUserId
+//
+// ----- Part 3: Output Normalization -----
+// Flatten and unify column names for final output.
+//
+| extend TimeGenerated = AuditTimeGenerated
+//
+// ----- Part 4: Apply Flexible Filters -----
+// Filters only activate if input lists are not empty.
+//
+| where (array_length(InitiatorUPNs) == 0 or Initiator in (InitiatorUPNs))
+| where (array_length(TargetedAppIds) == 0 or TargetSpAppId in (TargetedAppIds))
+//
+// ----- Part 5: Final Output -----
+// Clean, readable table of correlated application creation events.
+//
+| distinct TimeGenerated, OperationName, Status, FailureReason, InitiatorType, Initiator, InitiatorIpAddress, TargetSpName, TargetSpAppId, TargetSpId, RequestId, RequestUri, IPAddress, ResponseStatusCode
+| sort by TimeGenerated desc
+| take 50

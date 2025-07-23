@@ -1,0 +1,47 @@
+﻿// Objective: Detects Entra ID user deletions via MicrosoftGraphActivityLogs, correlated with AuditLogs for full initiator and target details.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Set TargetUser to a string fragment (e.g., "mcrane86"); leave blank for all. InitiatorUPNs can restrict to certain actors.
+let TargetUser = ""; // e.g., "mcrane86"
+let InitiatorUPNs = dynamic([]); // e.g., ["admin@contoso.com"]
+//
+//-----Part 1: Filter Graph POSTs to user endpoints-----
+// Only show deletes via Graph POST on /users (v1.0 or beta)
+MicrosoftGraphActivityLogs
+| where TimeGenerated > ago(30d)
+| where RequestMethod == "POST"
+| where RequestUri has "/users"
+//
+//-----Part 2: Join with AuditLogs for initiator/target context-----
+// Adds who performed the delete and on whom.
+| join kind=inner (
+    AuditLogs
+    | where OperationName == "Delete user"
+    | extend InitiatedByUser = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+    | extend InitiatedByApp = tostring(parse_json(tostring(InitiatedBy.app)).displayName)
+    | extend InitiatorType = case(
+        isnotempty(InitiatedByUser) and tolower(InitiatedByUser) has "sync", "Sync",
+        isnotempty(InitiatedByApp) and tolower(InitiatedByApp) has "sync", "Sync",
+        isnotempty(InitiatedByUser), "User",
+        isnotempty(InitiatedByApp), "Application",
+        "Unknown"
+    )
+    | extend TargetResource = parse_json(tostring(TargetResources))[0]
+    | extend TargetUserUPN = tostring(TargetResource.userPrincipalName)
+    | extend TargetObjectId = tostring(TargetResource.id)
+) on $left.UserId == $right.InitiatedByUser
+//
+//-----Part 3: Analyst Filtering-----
+// Filters for user UPN fragment (contains), or a specific set of initiator UPNs.
+| where (TargetUser == "" or TargetUserUPN contains TargetUser)
+| where (array_length(InitiatorUPNs) == 0 or InitiatedByUser in (InitiatorUPNs))
+//
+//-----Part 4: Summarize to deduplicate (latest delete per user/endpoint)-----
+// This prevents multiple noisy rows per user/endpoint. Remove or change grouping to suit your needs.
+| summarize arg_max(ActivityDateTime, Service=Identity, InitiatorType, InitiatedByUser, InitiatedByApp, OperationName, Result, TargetObjectId) by TargetUserUPN, RequestUri
+//
+//-----Part 5: Final Output-----
+// Columns chosen for clarity and review.
+| project ActivityDateTime, Service, InitiatorType, InitiatedByUser, InitiatedByApp, OperationName, Result, TargetUserUPN, TargetObjectId, RequestUri
+| sort by ActivityDateTime desc
+| take 50

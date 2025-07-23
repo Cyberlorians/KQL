@@ -1,0 +1,67 @@
+﻿// Objective: Detects user account creation events in Entra ID by correlating Microsoft Graph activity and AuditLogs, allowing targeted review by initiator or target UPN.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave empty to return all results, or populate with UPNs for targeted filtering.
+//
+let TargetedUserUPNs = dynamic([]);  // Example: dynamic(["user1@domain.com"])
+let InitiatorUPNs = dynamic([]);     // Example: dynamic(["admin@domain.com"])
+//
+// ----- Part 1: Pre-filter Microsoft Graph Activity Logs -----
+// Only POST requests to /users in the last 30 days are relevant for user creation.
+//
+MicrosoftGraphActivityLogs
+| where TimeGenerated > ago(30d)
+| where RequestMethod == 'POST'
+| where RequestUri has '/users' // Captures both /beta and /v1.0 endpoints
+//
+// ----- Part 2: Join with AuditLogs for "Add user" events -----
+// Correlate Graph activity with audit logs by matching UserId to InitiatedBy.user.id.
+//
+| join kind=inner (
+    AuditLogs
+    | where TimeGenerated > ago(30d)
+    | where OperationName == "Add user"
+    | extend InitiatorInfo = todynamic(InitiatedBy)
+    | extend TargetInfo = todynamic(TargetResources)[0]
+    | extend InitiatorUserId = tostring(InitiatorInfo.user.id)
+    | extend
+        Status = Result,
+        FailureReason = tostring(ResultSignature),
+        InitiatorType = case(
+            tostring(InitiatorInfo.user.userPrincipalName) has_cs "Sync", "Sync Process",
+            isnotempty(InitiatorInfo.user.userPrincipalName), "Interactive User",
+            isnotempty(InitiatorInfo.app.displayName), "Application",
+            "Other"
+        ),
+        Initiator = coalesce(
+            tostring(InitiatorInfo.user.userPrincipalName),
+            tostring(InitiatorInfo.app.displayName)
+        ),
+        InitiatorIpAddress = tostring(InitiatorInfo.user.ipAddress),
+        TargetUserUPN = tostring(TargetInfo.userPrincipalName),
+        TargetUserID = tostring(TargetInfo.id)
+    | project AuditTimeGenerated = TimeGenerated, Status, FailureReason, InitiatorType, Initiator, InitiatorIpAddress, TargetUserUPN, TargetUserID, InitiatorUserId
+) on $left.UserId == $right.InitiatorUserId
+//
+// ----- Part 3: Output Normalization -----
+// Flatten and unify column names for final output.
+//
+| extend TimeGenerated = AuditTimeGenerated
+//
+// ----- Part 4: Apply Flexible Filters -----
+// Show all unless filtering is explicitly requested.
+//
+| where (array_length(TargetedUserUPNs) == 0 or TargetUserUPN in (TargetedUserUPNs))
+| where (array_length(InitiatorUPNs) == 0 or Initiator in (InitiatorUPNs))
+//
+// ----- Part 5: Summarization -----
+// Use arg_max to get the latest event per TargetUserID.
+//
+| summarize arg_max(TimeGenerated, Status, FailureReason, InitiatorType, Initiator, InitiatorIpAddress, TargetUserUPN, TargetUserID, RequestId, RequestUri, IPAddress, ResponseStatusCode) by TargetUserID
+//
+// ----- Part 6: Final Output -----
+// Clean, readable table of the most recent user creation events per user.
+//
+| project TimeGenerated, Status, FailureReason, InitiatorType, Initiator, InitiatorIpAddress, TargetUserUPN, TargetUserID, RequestId, RequestUri, IPAddress, ResponseStatusCode
+| sort by TimeGenerated desc
+| take 50

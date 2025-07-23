@@ -1,0 +1,35 @@
+﻿// Objective: Monitors Entra role assignments to service principals, surfacing delegated privileges that may indicate escalation or risky app permissions.
+//
+let TargetSPs = dynamic([]);     // Example: dynamic(["MyAppServicePrincipal"])
+let TargetActors = dynamic([]);  // Example: dynamic(["admin@contoso.com"]);
+//
+// ----- Part 1: Filter AuditLogs for Role Assignments -----
+// Captures events where Entra roles are added to service principals.
+//
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName == "Add member to role"
+//
+// ----- Part 2: Extract Key Fields -----
+// Pulls service principal type, role, actor, and object ID.
+//
+| extend 
+    ServicePrincipalType = tostring(TargetResources[0].type),
+    ServicePrincipalObjectId = tostring(TargetResources[0].id),
+    RoleAdded = tostring(parse_json(tostring(parse_json(tostring(TargetResources[0].modifiedProperties))[1].newValue))),
+    ServicePrincipalName = tostring(TargetResources[0].displayName),
+    Actor = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName),
+    ActorIPAddress = tostring(parse_json(tostring(InitiatedBy.user)).ipAddress)
+//
+// ----- Part 3: Apply Escalation Filters and Optional Targeting -----
+// Only include service principal assignments, with optional filtering.
+//
+| where ServicePrincipalType == "ServicePrincipal"
+| where (array_length(TargetSPs) == 0 or ServicePrincipalName in (TargetSPs))
+| where (array_length(TargetActors) == 0 or Actor in (TargetActors))
+//
+// ----- Part 4: Final Output -----
+//
+| distinct TimeGenerated, OperationName, RoleAdded, ServicePrincipalName, ServicePrincipalObjectId, Actor, ActorIPAddress
+| sort by TimeGenerated desc
+| take 50

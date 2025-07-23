@@ -1,0 +1,45 @@
+﻿// Objective: Surfaces user account creations from Entra ID Provisioning logs (AADProvisioningLogs).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results.
+//
+let TargetIdentities = dynamic([]);        // Example: dynamic(["john.doe@agency.gov"])
+let InitiatingApps = dynamic([]);          // Example: dynamic(["Entra ID Cloud Sync"])
+//
+// ----- Part 1: Pre-filter AAD Provisioning Logs -----
+// Only user creation events (ProvisioningAction == "create") in the last 390 days.
+//
+AADProvisioningLogs
+| where TimeGenerated > ago(30d)
+| where ProvisioningAction == "create"
+//
+// ----- Part 2: Exclude Skipped Results -----
+// Filter out provisioning events where the result was "Skipped".
+//
+| where ResultType <> "Skipped"
+//
+// ----- Part 3: Parse and Enrich Details -----
+// Extract key fields for clear, actionable output.
+//
+| extend
+    Service = tostring(parse_json(InitiatedBy).Name),
+    InitiatedByApp = tostring(parse_json(ServicePrincipal).Name)
+//
+// ----- Part 4: Apply Dynamic Filters -----
+// Only restrict if filtering values are provided.
+//
+| where (array_length(TargetIdentities) == 0 or TargetIdentity in (TargetIdentities))
+| where (array_length(InitiatingApps) == 0 or InitiatedByApp in (InitiatingApps))
+//
+// ----- Part 5: Summarize to Latest Event per Correlation and Target -----
+// Use arg_max to get the latest event for each CorrelationId and TargetIdentity.
+//
+| summarize arg_max(TimeGenerated, OperationName, ResultType, ResultSignature, ResultDescription, Service, InitiatedByApp, TargetIdentity, TargetSystem, SourceIdentity, SourceSystem, ProvisioningStatusInfo, ModifiedProperties, CorrelationId)
+  by CorrelationId, TargetIdentity
+//
+// ----- Part 6: Final Output -----
+// Distinct, readable table for review and investigation.
+//
+| distinct TimeGenerated, OperationName, ResultType, ResultSignature, ResultDescription, Service, InitiatedByApp, TargetIdentity, TargetSystem, SourceIdentity, SourceSystem, ProvisioningStatusInfo, ModifiedProperties, CorrelationId
+| sort by TimeGenerated desc
+| take 50

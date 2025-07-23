@@ -1,0 +1,70 @@
+﻿// Objective: Detects provisioning of privileged roles in Entra ID (AuditLogs), focused on "Add member to role" events.
+// Parses detailed role, group, and user context for each event, supports dynamic filtering by user, app, or role.
+// Supports privileged access reviews and "Establish & Manage Privileges" pillar.
+//
+// ----- Part 0: Analyst-Driven Targeting (optional) -----
+// Filter for specific users, apps, or roles. Leave arrays empty to return all.
+//
+let TargetUsers = dynamic([]);     // Example: ["jdoe@contoso.com"]
+let TargetApps  = dynamic([]);     // Example: ["MyAutomationApp"]
+let TargetRoles = dynamic([]);     // Example: ["Global Administrator"]
+//
+// ----- Part 1: Filter for Role-Related Provisioning Events -----
+// Captures role assignments, removals, and similar events involving roles.
+//
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName has "role"
+//
+// ----- Part 2: Parse Actor & Target Details -----
+// Extract initiator info (user or app) and expand target resources.
+//
+| extend InitiatedByUser = tostring(InitiatedBy.user.userPrincipalName)
+| extend InitiatedByApp  = tostring(InitiatedBy.app.displayName)
+| extend InitiatorType   = case(
+    isnotempty(InitiatedByUser), "User",
+    isnotempty(InitiatedByApp), "Application",
+    "Other"
+)
+| mv-apply TargetResource = parse_json(tostring(TargetResources)) on (
+    extend
+        ResourceType        = tostring(TargetResource.type),
+        ResourceDisplayName = tostring(TargetResource.displayName),
+        ResourceUPN         = tostring(TargetResource.userPrincipalName),
+        ResourceId          = tostring(TargetResource.id)
+)
+//
+// ----- Part 3: Summarize Per Event -----
+// Pull relevant fields based on resource type.
+//
+| summarize
+    RoleName         = anyif(ResourceDisplayName, ResourceType == "Role"),
+    GroupName        = anyif(ResourceDisplayName, ResourceType == "Other"),
+    TargetUserUPN    = anyif(ResourceUPN, ResourceType == "User"),
+    TargetResourceId = anyif(ResourceId, ResourceType == "Role"),
+    GroupId          = anyif(ResourceId, ResourceType == "Other")
+    by TimeGenerated, OperationName, InitiatorType, InitiatedByUser, InitiatedByApp, Category, AADOperationType, Result
+//
+// ----- Part 4: Null Handling -----
+// Replace empty values with "N/A" to improve readability.
+//
+| extend
+    RoleName      = iif(isempty(RoleName), "N/A", RoleName),
+    GroupName     = iif(isempty(GroupName), "N/A", GroupName),
+    TargetUserUPN = iif(isempty(TargetUserUPN), "N/A", TargetUserUPN)
+//
+// ----- Part 5: Apply Targeting Filters -----
+// Use analyst input arrays for scoped filtering.
+//
+| where (array_length(TargetUsers) == 0 or TargetUserUPN in~ (TargetUsers))
+| where (array_length(TargetApps)  == 0 or InitiatedByApp in~ (TargetApps))
+| where (array_length(TargetRoles) == 0 or RoleName in~ (TargetRoles))
+| where OperationName has "Add member to role" //establishing for establighs and manage privileges category
+//
+// ----- Part 6: Final Output -----
+// Clean, enriched view of privileged role provisioning.
+//
+| project TimeGenerated, OperationName, InitiatorType, InitiatedByUser, InitiatedByApp, RoleName, GroupName, TargetUserUPN, Category, AADOperationType, Result
+| sort by TimeGenerated desc
+| take 50
+

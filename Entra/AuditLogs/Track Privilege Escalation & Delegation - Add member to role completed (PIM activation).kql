@@ -1,0 +1,47 @@
+﻿// Objective: Identifies PIM role or group activations occurring outside standard working hours to support investigation of after-hours privileged access.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave arrays empty to return all results.
+let TargetIdentities = dynamic([]); // Example: dynamic(["user@domain.com"])
+let TargetRoles = dynamic([]);      // Example: dynamic(["Global Administrator", "Privileged Role Administrator"])
+//
+// ----- Part 1: Filter for After-Hours PIM Activations -----
+// Adjust the UTC offset below to reflect your local timezone (e.g., -4h for Eastern Time).
+// NOTE: This assumes your Log Analytics workspace is set to display timestamps in UTC.
+// If it's set to local time already, you may need to REMOVE the offset to avoid double-shifting.
+//
+AuditLogs
+| extend LocalTime = TimeGenerated - 4h  // Adjust offset to match your regional timezone
+| where LocalTime > ago(30d)
+| where hourofday(LocalTime) !between (6 .. 18)  // After-hours = before 6 AM or after 6 PM local time
+//
+// ----- Part 2: Filter for PIM Role Activation Events -----
+//
+| where OperationName == "Add member to role completed (PIM activation)"
+//
+// ----- Part 3: Extract Actor and Role/Group Context -----
+// Identifies the user performing the action and the activated role or group.
+//
+| extend 
+    Identity = tostring(parse_json(tostring(InitiatedBy.user)).displayName),
+    PIMGroupUpdated = case(
+        tostring(TargetResources[3].type) == "Other", tostring(TargetResources[3].displayName), ""
+    ),
+    PIMRoleUpdated = case(
+        tostring(TargetResources[3].type) == "Directory", tostring(TargetResources[0].displayName), ""
+    )
+//
+// ----- Part 4: Normalize Output Labels -----
+// Adds "Member" or "Role" suffixes to distinguish between PIM Groups and Roles.
+//
+| extend 
+    PIMRoleUpdated = case(isnotempty(PIMGroupUpdated), strcat(PIMRoleUpdated, " Member"), PIMRoleUpdated),
+    PIMGroupUpdated = case(isnotempty(PIMRoleUpdated), strcat(PIMGroupUpdated, " Role"), PIMGroupUpdated)
+//
+// ----- Part 5: Apply Targeting and Return Output -----
+//
+| where (array_length(TargetIdentities) == 0 or Identity in (TargetIdentities))
+| where (array_length(TargetRoles) == 0 or PIMRoleUpdated in (TargetRoles))
+| distinct LocalTime, Identity, PIMRoleUpdated, PIMGroupUpdated, ResultReason
+| sort by LocalTime desc
+| take 50

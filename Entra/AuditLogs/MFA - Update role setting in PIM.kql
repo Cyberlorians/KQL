@@ -1,0 +1,35 @@
+﻿// Objective: Tracks changes to Privileged Identity Management (PIM) role settings in Entra ID (AuditLogs).
+// Focuses on modifications affecting MFA requirements and Authentication Context (ACRS).
+// Enables compliance monitoring and privileged access auditing.
+//
+// ----- Part 0: Track All PIM Role Setting Changes for MFA & AuthN Context -----
+// This query finds PIM role/group setting changes that affect MFA or Authentication Context (ACRS).
+// It adds a column for "ChangeType" to distinguish MFA vs. AuthN Context changes.
+//
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName == "Update role setting in PIM"
+| where ResultDescription contains "MFA" or ResultDescription contains "ACRS"
+// Label the type of change (MFA or AuthN Context)
+| extend ChangeType = case(
+    ResultDescription contains "MFA", "MFA Setting",
+    ResultDescription contains "ACRS", "AuthN Context",
+    "Other"
+)
+// Who performed the change
+| extend ['Initiated By'] = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName)
+// If a PIM group was updated, display it
+| extend ['PIM Group Updated'] = case(
+    array_length(TargetResources) > 2 and tostring(TargetResources[2].type) == "Other",
+    tostring(TargetResources[2].displayName),
+    ""
+)
+// If a PIM role was updated, display it
+| extend ['PIM Role Updated'] = case(
+    array_length(TargetResources) > 2 and tostring(TargetResources[2].type) == "Directory",
+    tostring(TargetResources[0].displayName),
+    ""
+)
+| distinct TimeGenerated, ['Initiated By'], OperationName, ChangeType, ResultDescription, ['PIM Group Updated'], ['PIM Role Updated'], LoggedByService, Result
+| sort by TimeGenerated desc 
+| take 50

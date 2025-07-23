@@ -1,0 +1,24 @@
+﻿// Objective: Alerts on successful service principal sign-ins from new IP addresses not seen in historical baselines, highlighting potential compromise or misuse.
+// Detects when a Service Principal signs in successfully (ResultType == \"0\") from a new IP address in the last 7 days compared to prior 90-day baseline.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+let TargetServicePrincipals = dynamic([]); // Example: dynamic(["MyAppServicePrincipal"])
+// ----- Part 1: Define Timeframes -----
+let BaselinePeriod = 30d;
+let DetectionPeriod = 7d;
+// ----- Part 2: Establish Historical IP Baseline -----
+// Captures known AppId/IP pairs in the baseline window.
+let HistoricalIPs =
+    AADServicePrincipalSignInLogs
+    | where TimeGenerated between (ago(BaselinePeriod) .. ago(DetectionPeriod))
+    | distinct AppId, IPAddress;
+// ----- Part 3: Detect New Service Principal IP Usage in Last 7 Days -----
+// Finds new AppId/IP pairs, filtered for success and optional targeting.
+AADServicePrincipalSignInLogs
+| where TimeGenerated > ago(DetectionPeriod)
+| where ResultType == "0"
+| where array_length(TargetServicePrincipals) == 0 or ServicePrincipalName in (TargetServicePrincipals)
+| join kind=leftanti HistoricalIPs on AppId, IPAddress
+| project TimeGenerated, ServicePrincipalName, AppId, IPAddress
+| sort by TimeGenerated desc
+| take 50

@@ -1,0 +1,29 @@
+﻿// Objective: Detects deprovisioning/removal of privileged roles via Entra PIM or Identity Governance (AuditLogs).
+// Tracks who/what triggered privileged role removal to confirm proper lifecycle and offboarding controls.
+//
+// Identifies privileged role removals triggered by:
+// - Entra PIM (activation expiration, manual removal)
+// - Identity Governance policy enforcement
+//
+// Key Characteristics:
+// - Focused on removals explicitly initiated by PIM services
+// - Captures both the actor (PIM app) and the user/role affected
+// - Helps confirm lifecycle enforcement and proper offboarding
+// ----- Part 0: Dynamic Targeting (Optional) -----
+let TargetUsers = dynamic([]);  // e.g., ["admin@domain.com"]
+// ----- Part 1: Filter Deprovisioning Events -----
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName contains "remove"
+| where array_length(TargetUsers) == 0 or tostring(TargetResources[0].userPrincipalName) in (TargetUsers)
+| extend InitiatedBy = tostring(Identity)
+| where InitiatedBy has_any ("MS-PIM", "Azure AD PIM")
+// ----- Part 2: Extract Actor and Target Info -----
+| extend
+    Target = tostring(TargetResources[0].userPrincipalName),
+    TargetRole = tostring(TargetResources[0].displayName),
+    ResultStatus = tostring(Result)
+// ----- Part 3: Final Output -----
+| project TimeGenerated, OperationName, InitiatedBy, Target, TargetRole, ResultStatus
+| sort by TimeGenerated desc
+| take 50

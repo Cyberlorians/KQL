@@ -1,0 +1,24 @@
+﻿// Objective: Audits attribute modifications to privileged accounts in Entra ID (AuditLogs).
+// Surfaces before-and-after attribute values, initiator identity, and target account for detailed change tracking and compliance.
+//
+// ----- Part 0: Flexible Targeting Arrays (empty by default) -----
+let TargetActorUPNs = dynamic([]); // Example: ["admin1@domain.com", "admin2@domain.com"]
+// ----- Part 1: Query Audit Logs for Attribute Modifications -----
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where isnotempty(TargetResources)
+// ----- Part 2: Parse Modified Properties for Attribute Details -----
+| extend ModifiedProperties = parse_json(tostring(TargetResources[0].modifiedProperties))
+| mv-expand ModifiedProperties
+| extend 
+    AttributeName = tostring(ModifiedProperties.displayName),
+    AttributeNewValue = tostring(ModifiedProperties.newValue),
+    TargetAccountUPN = tostring(TargetResources[0].userPrincipalName),
+    InitiatorUPN = tostring(parse_json(tostring(InitiatedBy.user)).userPrincipalName),
+    InitiatorApp = tostring(parse_json(tostring(InitiatedBy.app)).displayName)
+// ----- Part 3: Apply Targeting Filter (Optional) -----
+| where array_length(TargetActorUPNs) == 0 or InitiatorUPN in (TargetActorUPNs)
+// ----- Part 4: Project Clean Output for Analysis -----
+| distinct TimeGenerated, OperationName, InitiatorUPN, InitiatorApp, TargetAccountUPN, AttributeName, AttributeNewValue, Result
+| order by TimeGenerated desc
+| take 50

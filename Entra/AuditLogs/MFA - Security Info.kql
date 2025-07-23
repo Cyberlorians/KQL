@@ -1,0 +1,47 @@
+﻿// Objective: Detects security info registration changes (including MFA) in Entra ID using AuditLogs.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave this list empty to return all results,
+// or populate with UPNs to narrow the scope.
+//
+let TargetUPNs = dynamic([]); // e.g., ["user1@agency.gov", "admin@agency.gov"]
+//
+// ----- Part 1: Filter for Security Info Registration Events -----
+// Covers both self-service and admin-driven security info changes.
+//
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName has "security info"
+| where Result == "success"
+//
+// ----- Part 2: Parse Initiator and Target Safely -----
+// Supports both user and app-initiated events.
+//
+| extend Initiated = todynamic(InitiatedBy)
+| extend
+    Actor = coalesce(
+        tostring(Initiated.user.userPrincipalName),
+        tostring(Initiated.app.displayName)
+    ),
+    InitiatorIP = tostring(Initiated.user.ipAddress)
+| extend Target = todynamic(TargetResources)[0]
+| extend
+    TargetUPN = tostring(Target.userPrincipalName),
+    TargetUserId = tostring(Target.id)
+//
+// ----- Part 3: Optional Filtering -----
+// Leave TargetUPNs blank to return all.
+//
+| where (array_length(TargetUPNs) == 0 or TargetUPN in (TargetUPNs))
+//
+// ----- Part 4: Summarize by User -----
+// Return only the latest event per user.
+//
+| summarize arg_max(TimeGenerated, Actor, InitiatorIP, OperationName, ResultReason) by TargetUPN, TargetUserId
+//
+// ----- Part 5: Final Output -----
+// Compact, deduplicated view of latest registrations.
+//
+| distinct TimeGenerated, Actor, InitiatorIP, TargetUPN, TargetUserId, OperationName, ResultReason
+| sort by TimeGenerated desc
+| take 50

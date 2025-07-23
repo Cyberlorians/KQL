@@ -1,0 +1,54 @@
+﻿// Objective: Detects new user creation events in Entra ID and allows for targeted filtering by initiator or target UPN.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these lists empty to return all results.
+// Add specific UPNs to filter for certain initiators or targets.
+//
+let TargetedUserUPNs = dynamic([]); // Example: dynamic(["user1@domain.com", "user2@domain.com"])
+let InitiatorUPNs = dynamic([]);    // Example: dynamic(["admin@domain.com"])
+// 
+// ----- Part 1: Filter for "Add user" Operations -----
+// Only include "Add user" events from the last 30 days.
+//
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName == "Add user"
+//
+// ----- Part 2: Parse Nested JSON Fields -----
+// Safely extract initiator and target user information from nested JSON.
+//
+| extend InitiatorInfo = todynamic(InitiatedBy)
+| extend TargetInfo = todynamic(TargetResources)[0]
+//
+// ----- Part 3: Enrich and Normalize Data -----
+// Create clean, uniform columns for reporting and analysis.
+//
+| extend
+    Status = Result,
+    FailureReason = tostring(ResultSignature),
+    InitiatorType = case(
+        tostring(InitiatorInfo.user.userPrincipalName) has_cs "Sync", "Sync Process",
+        isnotempty(InitiatorInfo.user.userPrincipalName), "Interactive User",
+        isnotempty(InitiatorInfo.app.displayName), "Application",
+        "Other"
+    ),
+    Initiator = coalesce(
+        tostring(InitiatorInfo.user.userPrincipalName),
+        tostring(InitiatorInfo.app.displayName)
+    ),
+    InitiatorIpAddress = tostring(InitiatorInfo.user.ipAddress),
+    TargetUserUPN = tostring(TargetInfo.userPrincipalName),
+    TargetUserID = tostring(TargetInfo.id)
+//
+// ----- Part 4: Apply Dynamic Filters -----
+// If either list is empty, all rows pass the filter.
+//
+| where (array_length(TargetedUserUPNs) == 0 or TargetUserUPN in (TargetedUserUPNs))
+| where (array_length(InitiatorUPNs) == 0 or Initiator in (InitiatorUPNs))
+//
+// ----- Part 5: Final Output -----
+// Output a clean, deduplicated table of user creation events.
+//
+| distinct TimeGenerated, Status, FailureReason, InitiatorType, Initiator, InitiatorIpAddress, TargetUserUPN, TargetUserID
+| sort by TimeGenerated desc
+| take 50

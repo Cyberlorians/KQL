@@ -1,0 +1,64 @@
+﻿// Objective: Detects and tracks creation of new Azure AD service principals, providing visibility into new application and automation identities.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these lists empty to show all results.
+//
+let InitiatorUPNs = dynamic([]);       // Example: dynamic(["admin@domain.com"])
+let TargetedAppIds = dynamic([]);      // Example: dynamic(["00000003-0000-0000-c000-000000000000"])
+// 
+// ----- Part 1: Filter for "Add service principal" Operations -----
+// Only include "Add service principal" events from the last 30 days.
+//
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName == "Add service principal"
+//
+// ----- Part 2: Extract AppId from AdditionalDetails or modifiedProperties -----
+// This block finds and extracts the AppId from AdditionalDetails, and falls back to modifiedProperties if needed.
+//
+| mv-apply Detail = todynamic(AdditionalDetails) on (
+    where Detail.key == "AppId"
+    | project TargetSpAppId = tostring(Detail.value)
+)
+| extend TargetSpAppId = iff(isnotempty(TargetSpAppId), TargetSpAppId,
+    extract(@"AppId"":\s*""([^""]+)""", 1, tostring(TargetResources)))
+//
+// ----- Part 3: Parse Nested JSON Fields -----
+// Safely parse initiator and target service principal information.
+//
+| extend InitiatorInfo = todynamic(InitiatedBy)
+| extend TargetSpInfo = todynamic(TargetResources)[0]
+//
+// ----- Part 4: Enrich and Normalize Data -----
+// Create clean, uniform columns for reporting and analysis.
+//
+| extend
+    Status = Result,
+    FailureReason = tostring(ResultSignature),
+    InitiatorType = case(
+        isnotempty(InitiatorInfo.user.userPrincipalName), "User",
+        isnotempty(InitiatorInfo.app.displayName), "Application",
+        tostring(Identity) has_cs "Microsoft", "Microsoft Service",
+        "Other"
+    ),
+    Initiator = coalesce(
+        tostring(InitiatorInfo.user.userPrincipalName),
+        tostring(InitiatorInfo.app.displayName),
+        tostring(Identity)
+    ),
+    InitiatorIpAddress = tostring(InitiatorInfo.user.ipAddress),
+    TargetSpName = tostring(TargetSpInfo.displayName),
+    TargetSpId = tostring(TargetSpInfo.id)
+//
+// ----- Part 5: Apply Dynamic Filters -----
+// If filter lists are empty, all records pass.
+//
+| where (array_length(InitiatorUPNs) == 0 or Initiator in (InitiatorUPNs))
+| where (array_length(TargetedAppIds) == 0 or TargetSpAppId in (TargetedAppIds))
+//
+// ----- Part 6: Final Output -----
+// Output a clean, deduplicated table of service principal creation events.
+//
+| distinct TimeGenerated, OperationName, Status, FailureReason, InitiatorType, Initiator, InitiatorIpAddress, TargetSpName, TargetSpAppId, TargetSpId
+| sort by TimeGenerated desc
+| take 50

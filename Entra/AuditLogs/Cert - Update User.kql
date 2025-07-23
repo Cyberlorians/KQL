@@ -1,0 +1,64 @@
+﻿// Objective: Tracks all user update operations in Entra ID involving certificate management using AuditLogs.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these lists empty to return all results.
+// Add specific UPNs to filter for certain initiators or targets.
+//
+let TargetedUserUPNs = dynamic([]); // Example: dynamic(["user1@domain.com"])
+let InitiatorUPNs = dynamic([]);    // Example: dynamic(["admin@domain.com"])
+//
+// ----- Part 1: Filter for "Update user" Operations -----
+// Focused only on user update events in last 30 days.
+//
+AuditLogs
+| where TimeGenerated > ago(30d)
+| where OperationName == "Update user"
+//
+// ----- Part 2: Parse Nested Fields -----
+// Extract both actor and target user information.
+//
+| extend InitiatorInfo = todynamic(InitiatedBy)
+| extend TargetInfo = todynamic(TargetResources)[0]
+//
+// ----- Part 3: Normalize for Readability -----
+// Friendly names for reporting.
+//
+| extend
+    Status = Result,
+    FailureReason = tostring(ResultSignature),
+    InitiatorType = case(
+        tostring(InitiatorInfo.user.userPrincipalName) has_cs "Sync", "Sync Process",
+        isnotempty(InitiatorInfo.user.userPrincipalName), "Interactive User",
+        isnotempty(InitiatorInfo.app.displayName), "Application",
+        "Other"
+    ),
+    Initiator = coalesce(
+        tostring(InitiatorInfo.user.userPrincipalName),
+        tostring(InitiatorInfo.app.displayName)
+    ),
+    InitiatorIpAddress = tostring(InitiatorInfo.user.ipAddress),
+    TargetUserUPN = tostring(TargetInfo.userPrincipalName),
+    TargetUserID = tostring(TargetInfo.id)
+//
+// ----- Part 4: Optional Extraction of Modified Values -----
+// Expand modified properties if available.
+//
+| extend ModifiedProps = TargetInfo.modifiedProperties
+| mv-expand prop = ModifiedProps to typeof(dynamic)
+| extend 
+    ChangedAttribute = tostring(prop.displayName),
+    OldValue = tostring(prop.oldValue),
+    NewValue = tostring(prop.newValue)
+//
+// ----- Part 5: Apply Targeting Logic -----
+// Respect input filters or show all if empty.
+//
+| where (array_length(TargetedUserUPNs) == 0 or TargetUserUPN in (TargetedUserUPNs))
+| where (array_length(InitiatorUPNs) == 0 or Initiator in (InitiatorUPNs))
+//
+// ----- Part 6: Final Output -----
+// Show actor, target, and what was changed.
+//
+| distinct TimeGenerated, Status, FailureReason, InitiatorType, Initiator, InitiatorIpAddress, TargetUserUPN, TargetUserID, ChangedAttribute, OldValue, NewValue
+| sort by TimeGenerated desc
+| take 50

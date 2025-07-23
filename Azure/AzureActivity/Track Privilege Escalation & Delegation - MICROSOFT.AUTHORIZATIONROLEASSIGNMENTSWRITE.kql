@@ -1,0 +1,36 @@
+﻿// Objective: Surfaces Azure RBAC role assignments to service principals, enabling detection of privileged access or escalation in Azure resource scopes.
+//
+let TargetSPs = dynamic([]);     // Example: dynamic(["11111111-2222-3333-4444-555555555555"])
+let TargetActors = dynamic([]);  // Example: dynamic(["admin@contoso.com"]);
+//
+// ----- Part 1: Filter Azure Activity for Role Assignments -----
+// Captures all WRITE operations to role assignments in Azure.
+//
+AzureActivity
+| where TimeGenerated > ago(30d)
+| where OperationNameValue == "MICROSOFT.AUTHORIZATION/ROLEASSIGNMENTS/WRITE"
+//
+// ----- Part 2: Extract Key Fields from Properties -----
+// Parse nested requestbody for SP and role details.
+//
+| extend RawProps = parse_json(tostring(Properties_d.requestbody)).Properties
+| extend 
+    ServicePrincipalObjectId = tostring(RawProps.PrincipalId),
+    ServicePrincipalType = tostring(RawProps.PrincipalType),
+    Scope = tostring(RawProps.Scope),
+    RoleAdded = tostring(RawProps.RoleDefinitionId),
+    Actor = tostring(Properties_d.caller),
+    ResourceProvider = tostring(parse_json(Properties).resourceProviderValue)
+//
+// ----- Part 3: Apply Escalation Filters and Optional Targeting -----
+// Only include entries for service principals, with optional filters for SPs and actors.
+//
+| where ServicePrincipalType == "ServicePrincipal"
+| where (array_length(TargetSPs) == 0 or ServicePrincipalObjectId in (TargetSPs))
+| where (array_length(TargetActors) == 0 or Actor in (TargetActors))
+//
+// ----- Part 4: Final Output -----
+//
+| distinct TimeGenerated, RoleAdded, ResourceProvider, Scope, ServicePrincipalObjectId, Actor
+| sort by TimeGenerated desc
+| take 50

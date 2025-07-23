@@ -1,0 +1,44 @@
+﻿// Objective: Audits privileged Azure control-plane operations by correlating AzureActivity logs with Entra role holders for targeted investigation of sensitive actions.
+// Extracts metadata from Properties, supports dynamic filtering by user, role, or resource group.
+// Use to audit privileged operations across Azure resources, see who did what, and scope investigations.
+// Useful for cloud resource control and role-based privileged action tracking.
+//
+// ----- Part 0: Target Users -----
+let TargetUsers = dynamic([]); // Example: ["admin@contoso.com"]
+let TargetRoles = dynamic([]); // Example: ["Global Administrator"]
+let TargetResourceGroups = dynamic([]); // Example: ["RG-Production", "RG-Dev"]
+// ----- Part 1: Get Privileged Users via Roles -----
+let RoleUsers = IdentityInfo
+| where isnotempty(AssignedRoles)
+| extend FlattenedRoles = AssignedRoles
+| mv-expand FlattenedRoles
+| summarize AssignedRoles = make_set(FlattenedRoles, 10) by AccountUPN
+| extend HasRelevantRole = iff(array_length(TargetRoles) == 0 or AssignedRoles has_any (TargetRoles), true, false)
+| where HasRelevantRole
+| project AccountUPN, AssignedRoles;
+// ----- Part 2: Pull AzureActivity Events -----
+let RawActivity = AzureActivity
+| where TimeGenerated > ago(7d)
+| where ActivityStatusValue == "Start"
+| where (array_length(TargetUsers) == 0 or Caller in (TargetUsers))
+| project TimeGenerated, Caller, OperationNameValue, ActivityStatusValue, Properties;
+// ----- Part 3: Join with Role-Enriched Users -----
+RawActivity
+| join kind=inner (RoleUsers) on $left.Caller == $right.AccountUPN
+// ----- Part 4: Parse Properties inline
+| extend
+    EventCategory = tostring(parse_json(Properties)["eventCategory"]),
+    Entity = tostring(parse_json(Properties)["entity"]),
+    Message = tostring(parse_json(Properties)["message"]),
+    ResourceGroup = tostring(parse_json(Properties)["resourceGroup"]),
+    Resource = tostring(parse_json(Properties)["resource"]),
+    SubscriptionId = tostring(parse_json(Properties)["subscriptionId"]),
+    ClientIP = tostring(parse_json(tostring(parse_json(Properties)["httpRequest"]))["clientIpAddress"]),
+    RoleList = strcat_array(AssignedRoles, ",")
+// ----- Part 5: Optional Filter on Resource Groups
+| where (array_length(TargetResourceGroups) == 0 or ResourceGroup in (TargetResourceGroups))
+// ----- Part 6: Output
+| distinct TimeGenerated, Caller, RoleList, OperationNameValue, ActivityStatusValue,
+           EventCategory, Message, Entity, ResourceGroup, Resource, SubscriptionId, ClientIP
+| order by TimeGenerated desc
+| take 50

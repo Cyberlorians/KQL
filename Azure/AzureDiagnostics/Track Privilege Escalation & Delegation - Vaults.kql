@@ -1,0 +1,50 @@
+﻿// Objective: Tracks additions of Key Vault access policies for service principals, flagging escalations where apps gain access to keys, secrets, or certificates.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave arrays empty to return all results.
+//
+let TargetSPs = dynamic([]);     // Example: dynamic(["01fc33a7-78ba-4d2f-a4b7-768e336e890e"])
+let TargetActors = dynamic([]);  // Example: dynamic(["admin@contoso.com"]);
+//
+// ----- Part 1: Filter AzureDiagnostics for VaultPatch Events -----
+// Captures successful access policy changes to Key Vaults.
+//
+AzureDiagnostics
+| where TimeGenerated > ago(30d)
+| where ResourceType == "VAULTS"
+| where OperationName == "VaultPatch"
+| where ResultType == "Success"
+//
+// ----- Part 2: Join with AuditLogs for SP Display Name and Actor Identity -----
+// Links objectId to displayName and user who modified policy.
+//
+| join kind=inner (
+    AuditLogs
+    | extend oid = tostring(TargetResources[0].id)
+) on $left.addedAccessPolicy_ObjectId_g == $right.oid
+//
+// ----- Part 3: Extract and Rename Fields -----
+// Includes SP name, app ID, key/secret/cert policy details, and actor info.
+//
+| extend 
+    SPName = tostring(TargetResources[0].displayName),
+    AppID = tostring(AdditionalDetails[0].value),
+    SPObjectID = addedAccessPolicy_ObjectId_g,
+    Actor = identity_claim_http_schemas_xmlsoap_org_ws_2005_05_identity_claims_name_s,
+    AddedKeyPolicy = addedAccessPolicy_Permissions_keys_s,
+    AddedSecretPolicy = addedAccessPolicy_Permissions_secrets_s,
+    AddedCertPolicy = addedAccessPolicy_Permissions_certificates_s
+//
+// ----- Part 4: Apply Filters for Escalation and Optional Targeting -----
+// Filters to only include escalations involving meaningful access grants.
+//
+| where isnotempty(SPObjectID)
+| where isnotempty(AddedKeyPolicy) or isnotempty(AddedSecretPolicy) or isnotempty(AddedCertPolicy)
+| where (array_length(TargetSPs) == 0 or SPObjectID in (TargetSPs))
+| where (array_length(TargetActors) == 0 or Actor in (TargetActors))
+//
+// ----- Part 5: Final Output -----
+//
+| distinct TimeGenerated, KeyVaultName = Resource, SPName, SPObjectID, AppID, Actor, IPAddressofActor = CallerIPAddress, AddedSecretPolicy, AddedKeyPolicy, AddedCertPolicy
+| sort by TimeGenerated desc
+| take 50

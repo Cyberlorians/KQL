@@ -1,0 +1,29 @@
+// Objective: Identify Defender clients not using the latest Platform, Engine, or Signature version
+// Required Data: DeviceTvmSecureConfigurationAssessment
+// Workload: Microsoft Defender for Endpoint (TVM)
+// Table: DeviceTvmSecureConfigurationAssessment
+// Operation: Compare reported Defender versions against the published latest values from Microsoft
+// ----- Part 0: Define Latest Known Good Versions (from https://definitionupdates.microsoft.com/packages?action=info) -----
+let LatestPlatformVersion = "4.18.25060.7";
+let LatestEngineVersion = "1.1.25060.6";
+let LatestSignatureVersion = "1.399.1234.0";  // Replace with real-time version if needed
+// ----- Part 1: Filter by specific Defender version assessment and extract context -----
+DeviceTvmSecureConfigurationAssessment
+| where ConfigurationId == "scid-2011"  // Defender engine/platform/signature version config
+| mv-expand e = parse_json(Context)
+| extend
+    DeviceName,
+    DeviceId,
+    OSPlatform,
+    EngineVersion = tostring(e[1]),
+    ProductVersion = tostring(e[3]),
+    SignatureVersion = tostring(e[0])
+// ----- Part 2: Compare reported versions against latest -----
+| extend
+    PlatformUpToDate = iff(ProductVersion == LatestPlatformVersion, "Yes", "No"),
+    EngineUpToDate = iff(EngineVersion == LatestEngineVersion, "Yes", "No"),
+    SignatureUpToDate = iff(SignatureVersion == LatestSignatureVersion, "Yes", "No")
+// ----- Part 3: Return only clients not up-to-date -----
+| where PlatformUpToDate == "No" or EngineUpToDate == "No" or SignatureUpToDate == "No"
+// ----- Part 4: Final output -----
+| project DeviceName, DeviceId, OSPlatform, ProductVersion, PlatformUpToDate, EngineVersion, EngineUpToDate, SignatureVersion, SignatureUpToDate

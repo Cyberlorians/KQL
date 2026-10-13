@@ -1,0 +1,59 @@
+// SharePoint Activity > Site/Page accessed/created/modified
+// DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
+// Page creation/modification/access via FILE operations is restricted to .aspx paths.
+// Explicit page/site operations remain separately labeled; no document modification is called a page edit.
+// This is an explicit operation allowlist, not a claim of exhaustive site/page auditing.
+// Site access is evidenced by the page-access row's site/object URL, not an invented SiteViewed event.
+let StartTime = ago(30d);
+let EndTime = now();
+let TargetUser = "";          // Exact UserId OR case-insensitive substring in raw Actor.
+let TargetOperation = "";     // Exact operation.
+let TargetSite = "";          // Case-insensitive substring in Site_Url or OfficeObjectId.
+let TargetFileName = "";      // Exact SourceFileName or DestinationFileName (site-only events may have neither).
+let TargetObjectId = "";      // Exact OfficeObjectId or ListItemUniqueId.
+let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
+let MaxRows = 1000;
+OfficeActivity
+| where TimeGenerated between (StartTime .. EndTime)
+| where OfficeWorkload =~ "SharePoint"
+// Personal host OR personal object/site path is excluded even when the workload is SharePoint.
+| extend IsPersonalLocation = Site_Url contains "-my.sharepoint.com" or OfficeObjectId contains "-my.sharepoint.com"
+    or Site_Url contains "/personal/" or OfficeObjectId contains "/personal/"
+| where not(IsPersonalLocation)
+| extend IsAspxPath = SourceFileName matches regex @"(?i)\.aspx(?:[?#].*)?$"
+    or DestinationFileName matches regex @"(?i)\.aspx(?:[?#].*)?$"
+    or OfficeObjectId matches regex @"(?i)\.aspx(?:[?#].*)?$"
+    or SourceRelativeUrl matches regex @"(?i)\.aspx(?:[?#].*)?$"
+    or DestinationRelativeUrl matches regex @"(?i)\.aspx(?:[?#].*)?$"
+| extend ActivityKind = case(
+    Operation =~ "SiteCollectionCreated", "Site created",
+    Operation in~ ("SiteRenamed", "SiteCollectionQuotaModified", "WebThemeApplied"), "Site modified",
+    Operation in~ ("PageViewed", "PageViewedExtended"), "Page accessed",
+    IsAspxPath and Operation in~ ("FileAccessed", "FileAccessedExtended", "FilePreviewed"), "Page accessed (file audit)",
+    IsAspxPath and Operation in~ ("FileUploaded", "FileCopied"), "Page uploaded/copied (file audit)",
+    IsAspxPath and Operation in~ ("FileModified", "FileModifiedExtended", "FileRenamed", "FileMoved"), "Page modified (file audit)",
+    "")
+| where isnotempty(ActivityKind)
+| where isempty(TargetOperation) or Operation =~ TargetOperation
+| where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
+| where isempty(TargetSite) or Site_Url contains TargetSite or OfficeObjectId contains TargetSite
+| where isempty(TargetFileName) or SourceFileName =~ TargetFileName or DestinationFileName =~ TargetFileName
+| where isempty(TargetObjectId) or OfficeObjectId =~ TargetObjectId or tostring(ListItemUniqueId) =~ TargetObjectId
+| where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
+| extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
+| extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
+    OfficeWorkload, Operation, UserId, Actor, OfficeObjectId, Site_Url, SourceFileName,
+    DestinationFileName, SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId,
+    ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
+    JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId)))
+| extend RecordIdentity = case(isnotempty(tostring(SourceRecordId)), strcat("SourceRecordId:", tostring(SourceRecordId)),
+    isnotempty(tostring(OfficeId)), strcat("OfficeId:", tostring(OfficeId)),
+    strcat("Fallback:", hash_sha256(tostring(pack_array(TimeGenerated, EvidenceFingerprint)))))
+| extend EvidenceRecordKey = hash_sha256(tostring(pack_array(OrganizationId, RecordIdentity, EvidenceFingerprint)))
+| summarize arg_max(TimeGenerated, *) by EvidenceRecordKey
+| project TimeGenerated, OrganizationId, OfficeWorkload, Operation, ActivityKind, IsAspxPath,
+    UserId, Actor, Site_Url, OfficeObjectId, SourceFileName, DestinationFileName,
+    SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, SourceRecordId, OfficeId,
+    ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
+    JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId, EvidenceRecordKey
+| top min_of(MaxRows, 1000) by TimeGenerated desc

@@ -1,0 +1,44 @@
+// OneDrive > User File activity
+// DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
+// Explicit non-sync file operations; this allowlist is not exhaustive and does not reveal file contents.
+// SharePoint-labeled personal OneDrive records qualify by OfficeObjectId/Site_Url fallback.
+let StartTime = ago(30d);
+let EndTime = now();
+let TargetUser = "";          // Exact UserId OR case-insensitive substring in raw Actor.
+let TargetOperation = "";     // Exact operation from the allowlist below.
+let TargetSite = "";          // Case-insensitive substring in Site_Url or OfficeObjectId.
+let TargetFileName = "";      // Exact SourceFileName or DestinationFileName.
+let TargetObjectId = "";      // Exact OfficeObjectId or ListItemUniqueId.
+let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
+let MaxRows = 1000;
+OfficeActivity
+| where TimeGenerated between (StartTime .. EndTime)
+| extend IsPersonalLocation = Site_Url contains "-my.sharepoint.com" or OfficeObjectId contains "-my.sharepoint.com"
+    or Site_Url contains "/personal/" or OfficeObjectId contains "/personal/"
+| where OfficeWorkload =~ "OneDrive" or (OfficeWorkload =~ "SharePoint" and IsPersonalLocation)
+| where Operation in~ ("FileAccessed", "FileAccessedExtended", "FilePreviewed", "FileUploaded", "FileDownloaded",
+    "FileModified", "FileModifiedExtended", "FileCopied", "FileMoved", "FileRenamed", "FileDeleted",
+    "FileRecycled", "FileRestored", "FileCheckedIn", "FileCheckedOut", "FileCheckOutDiscarded", "FileVersionDeleted")
+| where isempty(TargetOperation) or Operation =~ TargetOperation
+| where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
+| where isempty(TargetSite) or Site_Url contains TargetSite or OfficeObjectId contains TargetSite
+| where isempty(TargetFileName) or SourceFileName =~ TargetFileName or DestinationFileName =~ TargetFileName
+| where isempty(TargetObjectId) or OfficeObjectId =~ TargetObjectId or tostring(ListItemUniqueId) =~ TargetObjectId
+| where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
+| extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
+| extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
+    OfficeWorkload, Operation, UserId, Actor, OfficeObjectId, Site_Url, SourceFileName,
+    DestinationFileName, SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId,
+    ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
+    JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId)))
+| extend RecordIdentity = case(isnotempty(tostring(SourceRecordId)), strcat("SourceRecordId:", tostring(SourceRecordId)),
+    isnotempty(tostring(OfficeId)), strcat("OfficeId:", tostring(OfficeId)),
+    strcat("Fallback:", hash_sha256(tostring(pack_array(TimeGenerated, EvidenceFingerprint)))))
+| extend EvidenceRecordKey = hash_sha256(tostring(pack_array(OrganizationId, RecordIdentity, EvidenceFingerprint)))
+| summarize arg_max(TimeGenerated, *) by EvidenceRecordKey
+| project TimeGenerated, OrganizationId, OfficeWorkload, Operation, IsPersonalLocation, UserId, Actor,
+    Site_Url, OfficeObjectId, SourceFileName, DestinationFileName,
+    SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, SourceRecordId, OfficeId,
+    ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
+    JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId, EvidenceRecordKey
+| top min_of(MaxRows, 1000) by TimeGenerated desc

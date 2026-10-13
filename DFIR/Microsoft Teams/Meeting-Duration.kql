@@ -1,0 +1,46 @@
+// Teams Calls and Meeting activities > Meeting Duration
+// DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
+// Duration is the interval on this evidence row, NOT a reconstructed overall meeting duration.
+// No min/max timestamp reconstruction, zero substitution, or summation across participants.
+let StartTime = ago(30d);
+let EndTime = now();
+let TargetUser = "";          // Exact UserId OR case-insensitive substring in raw Actor/Attendees/Members.
+let TargetOperation = "";     // Exact operation; empty = all allowed operations.
+let TargetMeetingId = "";     // Exact MeetingDetailId.
+let TargetChatThreadId = "";  // Exact ChatThreadId.
+let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
+let MaxRows = 1000;
+OfficeActivity
+| where TimeGenerated between (StartTime .. EndTime)
+| where OfficeWorkload =~ "MicrosoftTeams"
+| where Operation in~ ("MeetingDetail", "MeetingParticipantDetail", "CallParticipantDetail")
+| where isempty(TargetOperation) or Operation =~ TargetOperation
+| where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
+    or tostring(Attendees) contains TargetUser or tostring(Members) contains TargetUser
+| where isempty(TargetMeetingId) or MeetingDetailId =~ TargetMeetingId
+| where isempty(TargetChatThreadId) or ChatThreadId =~ TargetChatThreadId
+| where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
+| extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
+| extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
+    OfficeWorkload, Operation, UserId, Actor, JoinTime, LeaveTime, Attendees, Members,
+    ArtifactsShared, MeetingDetailId, ChatThreadId, ExtraProperties, OperationProperties,
+    Event_Data, OfficeObjectId, Site_Url, SourceFileName, DestinationFileName,
+    SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, ClientIP, ActorIpAddress, ResultStatus)))
+| extend RecordIdentity = case(isnotempty(tostring(SourceRecordId)), strcat("SourceRecordId:", tostring(SourceRecordId)),
+    isnotempty(tostring(OfficeId)), strcat("OfficeId:", tostring(OfficeId)),
+    strcat("Fallback:", hash_sha256(tostring(pack_array(TimeGenerated, EvidenceFingerprint)))))
+// Participant discriminator prevents a reused record ID from collapsing distinct join/leave evidence.
+| extend EvidenceRecordKey = hash_sha256(tostring(pack_array(OrganizationId, RecordIdentity, EvidenceFingerprint)))
+| summarize arg_max(TimeGenerated, *) by EvidenceRecordKey
+| extend HasValidInterval = isnotnull(JoinTime) and isnotnull(LeaveTime) and LeaveTime >= JoinTime
+| extend Duration = iff(HasValidInterval, LeaveTime - JoinTime, timespan(null)),
+    DurationSeconds = iff(HasValidInterval, (LeaveTime - JoinTime) / 1s, real(null)),
+    DurationStatus = case(isnull(JoinTime) or isnull(LeaveTime), "Missing join or leave time",
+        LeaveTime < JoinTime, "Invalid: leave precedes join", "Valid recorded interval")
+| project TimeGenerated, OrganizationId, OfficeWorkload, Operation, UserId, Actor,
+    JoinTime, LeaveTime, Duration, DurationSeconds, DurationStatus, HasValidInterval,
+    MeetingDetailId, ChatThreadId, Attendees, Members, ArtifactsShared,
+    ExtraProperties, OperationProperties, Event_Data, SourceRecordId, OfficeId, OfficeObjectId,
+    Site_Url, SourceFileName, DestinationFileName, SourceRelativeUrl, DestinationRelativeUrl,
+    ListItemUniqueId, ClientIP, ActorIpAddress, ResultStatus, EvidenceRecordKey
+| top min_of(MaxRows, 1000) by TimeGenerated desc

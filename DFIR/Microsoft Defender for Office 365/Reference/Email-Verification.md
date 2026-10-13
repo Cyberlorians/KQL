@@ -1,8 +1,10 @@
 # Email DFIR — live validation and coverage
 
+**Historical initial verification snapshot — noncanonical.** The prose and evidence below describe the earlier bounded runs, not the latest email validation status. Later validation does not retroactively change this report. Start at [DFIR Investigations](../../README.md) and use the [canonical MDO queries](../README.md).
+
 ## Artifact and execution surface
 
-- Investigation: [Email-Investigation.kql](Email-Investigation.kql).
+- Investigation: [XDR/Email-Investigation.kql](XDR/Email-Investigation.kql).
 - Executed in authenticated Microsoft Defender XDR Advanced Hunting in DIB Security Commercial on **2026-10-13**. Uses `Timestamp`; do not paste unchanged into a Sentinel schema that uses `TimeGenerated`.
 - Baseline Evidence window: **2026-09-13 15:34:03 UTC through 2026-10-13 15:34:03 UTC**. Subsequent timeline and filter runs used rolling `ago(30d)` / `now()` windows a few minutes later.
 - Status: **implemented and live-executed; positive evidence for the observed inbound scope, not 100% coverage of all email communications**.

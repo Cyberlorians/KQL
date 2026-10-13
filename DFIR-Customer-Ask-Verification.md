@@ -6,6 +6,16 @@
 **Validation date:** 2026-10-13  
 **Validation method:** Microsoft Sentinel Data Exploration MCP against the live workspace
 
+## Live rerun log — 2026-10-13
+
+All twelve saved artifacts in `C:\tools\kqlDFIR\validated\` were rerun individually against the live workspace. All twelve completed successfully. The exact timeline artifact also completed successfully and returned zero rows because it still contains the placeholder `user@dibsecurity.onmicrosoft.com` rather than a confirmed investigation UPN.
+
+The live counts are time-sensitive. The second run returned: `OfficeActivity` 2,001 rows; `DeviceEvents` 145,748 rows; `SigninLogs` 465 rows; `IdentityLogonEvents` 59 rows; `AuditLogs` 11,865 rows; `IdentityDirectoryEvents` 173 rows; `IdentityInfo` 558 rows; and `SecurityEvent` 0 rows for the tested network-share event IDs.
+
+## KQL Search grounding
+
+KQL Search was opened in the shared browser and searched for `Teams calls`. It returned the community query **Threat Hunting Microsoft Teams Calls By TLD**, using `CallActivityEvents`, with a GitHub source link. This supports the schema distinction that Teams call telemetry may be in `CallActivityEvents` rather than `OfficeActivity`; it does not validate DIBSecCom data. A broader search combining multiple terms returned no result, so KQL Search is treated as supplemental grounding only, never as tenant evidence.
+
 ## Verification standard
 
 A query is marked **Executed** only after it ran successfully against the live workspace. A query is marked **Data confirmed** only when the requested evidence returned matching records. A successful query with zero results is not treated as proof that the data source is unsupported.

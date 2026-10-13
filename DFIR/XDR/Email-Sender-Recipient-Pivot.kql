@@ -1,0 +1,26 @@
+// Platform: Microsoft Defender XDR Advanced Hunting (Timestamp).
+// Sender/recipient pivot — distinct visible and envelope sender fields.
+let StartTime = ago(30d);
+let EndTime = now();
+let SenderAddress = "";         // Exact sender; empty = all.
+let RecipientAddress = "";      // Exact recipient; empty = all.
+let SenderField = "Either";     // From, Envelope, or Either (case-sensitive).
+let MaxRows = 1000;
+let CommunicationPairs = materialize(
+	EmailEvents
+	| where Timestamp between (StartTime .. EndTime)
+	| where isempty(SenderAddress)
+		or (SenderField in ("From", "Either") and SenderFromAddress =~ SenderAddress)
+		or (SenderField in ("Envelope", "Either") and SenderMailFromAddress =~ SenderAddress)
+	| where isempty(RecipientAddress) or RecipientEmailAddress =~ RecipientAddress
+	| summarize FirstObserved=min(Timestamp), LastObserved=max(Timestamp),
+		ObservedEventCount=count(), arg_max(Timestamp, *)
+		by NetworkMessageId, RecipientEmailAddress
+);
+CommunicationPairs
+| project Timestamp, FirstObserved, LastObserved, ObservedEventCount,
+	NetworkMessageId, InternetMessageId, SenderFromAddress,
+	SenderMailFromAddress, SenderFromDomain, RecipientEmailAddress,
+	Subject, EmailDirection, DeliveryAction, DeliveryLocation,
+	AuthenticationDetails, AttachmentCount, UrlCount
+| top MaxRows by Timestamp desc

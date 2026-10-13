@@ -1,0 +1,26 @@
+// Platform: Microsoft Sentinel / Log Analytics (TimeGenerated).
+// Sender/recipient pivot — distinct visible and envelope sender fields.
+let StartTime = ago(30d);
+let EndTime = now();
+let SenderAddress = "";         // Exact sender; empty = all.
+let RecipientAddress = "";      // Exact recipient; empty = all.
+let SenderField = "Either";     // From, Envelope, or Either (case-sensitive).
+let MaxRows = 1000;
+let CommunicationPairs = materialize(
+	EmailEvents
+	| where TimeGenerated between (StartTime .. EndTime)
+	| where isempty(SenderAddress)
+		or (SenderField in ("From", "Either") and SenderFromAddress =~ SenderAddress)
+		or (SenderField in ("Envelope", "Either") and SenderMailFromAddress =~ SenderAddress)
+	| where isempty(RecipientAddress) or RecipientEmailAddress =~ RecipientAddress
+	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
+		ObservedEventCount=count(), arg_max(TimeGenerated, *)
+		by NetworkMessageId, RecipientEmailAddress
+);
+CommunicationPairs
+| project TimeGenerated, FirstObserved, LastObserved, ObservedEventCount,
+	NetworkMessageId, InternetMessageId, SenderFromAddress,
+	SenderMailFromAddress, SenderFromDomain, RecipientEmailAddress,
+	Subject, EmailDirection, DeliveryAction, DeliveryLocation,
+	AuthenticationDetails, AttachmentCount, UrlCount
+| top MaxRows by TimeGenerated desc

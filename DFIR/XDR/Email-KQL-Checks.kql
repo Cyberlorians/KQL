@@ -1,0 +1,61 @@
+// Platform: Microsoft Defender XDR Advanced Hunting (Timestamp).
+// Aggregate metadata checks do not replace the four investigation pivots.
+// All four tables must resolve. Missing tables/columns are schema errors, not PENDING.
+// Each ungrouped summarize emits one row even when its source has no scoped events.
+// PASS = observed rows meet the listed metadata checks; not proof of full coverage.
+// PENDING = no rows observed in scope; not proof of an ingestion failure.
+// MISSING = observed rows lack metadata needed for the listed pivots/enrichment.
+// Zero for an inapplicable check is not a claim that the source has that field.
+// Threat labels, sender IPs and other optional fields are not failure criteria.
+let StartTime = ago(30d);
+let EndTime = now();
+let Events = EmailEvents
+    | where Timestamp between (StartTime .. EndTime)
+    | summarize Records=count(), LastObservedTime=max(Timestamp),
+        MissingMessageId=countif(isempty(NetworkMessageId)),
+        MissingRecipient=countif(isempty(RecipientEmailAddress)),
+        MissingVisibleSender=countif(isempty(SenderFromAddress)),
+        MissingEnvelopeSender=countif(isempty(SenderMailFromAddress)),
+        MissingSubject=countif(isempty(Subject))
+    | extend Source="Events", SourceTable="EmailEvents",
+        MissingSHA256=tolong(0), MissingFileName=tolong(0),
+        MissingPositiveFileSize=tolong(0), MissingURL=tolong(0);
+let Attachments = EmailAttachmentInfo
+    | where Timestamp between (StartTime .. EndTime)
+    | summarize Records=count(), LastObservedTime=max(Timestamp),
+        MissingMessageId=countif(isempty(NetworkMessageId)),
+        MissingRecipient=countif(isempty(RecipientEmailAddress)),
+        MissingSHA256=countif(isempty(SHA256)), MissingFileName=countif(isempty(FileName)),
+        MissingPositiveFileSize=countif(isnull(FileSize) or FileSize <= 0)
+    | extend Source="Attachments", SourceTable="EmailAttachmentInfo",
+        MissingVisibleSender=tolong(0), MissingEnvelopeSender=tolong(0),
+        MissingSubject=tolong(0), MissingURL=tolong(0);
+let URLs = EmailUrlInfo
+    | where Timestamp between (StartTime .. EndTime)
+    | summarize Records=count(), LastObservedTime=max(Timestamp),
+        MissingMessageId=countif(isempty(NetworkMessageId)), MissingURL=countif(isempty(Url))
+    | extend Source="URLs", SourceTable="EmailUrlInfo", MissingRecipient=tolong(0),
+        MissingVisibleSender=tolong(0), MissingEnvelopeSender=tolong(0),
+        MissingSubject=tolong(0), MissingSHA256=tolong(0), MissingFileName=tolong(0),
+        MissingPositiveFileSize=tolong(0);
+let PostDelivery = EmailPostDeliveryEvents
+    | where Timestamp between (StartTime .. EndTime)
+    | summarize Records=count(), LastObservedTime=max(Timestamp),
+        MissingMessageId=countif(isempty(NetworkMessageId)),
+        MissingRecipient=countif(isempty(RecipientEmailAddress))
+    | extend Source="PostDelivery", SourceTable="EmailPostDeliveryEvents",
+        MissingVisibleSender=tolong(0), MissingEnvelopeSender=tolong(0),
+        MissingSubject=tolong(0), MissingSHA256=tolong(0), MissingFileName=tolong(0),
+        MissingPositiveFileSize=tolong(0), MissingURL=tolong(0);
+union Events, Attachments, URLs, PostDelivery
+| extend MissingRequiredValues=MissingMessageId + MissingRecipient + MissingVisibleSender
+    + MissingEnvelopeSender + MissingSubject + MissingSHA256 + MissingFileName
+    + MissingPositiveFileSize + MissingURL
+| extend Status=case(Records == 0, "PENDING", MissingRequiredValues > 0, "MISSING", "PASS"),
+    LastObserved=iff(isnull(LastObservedTime), "Not observed", tostring(LastObservedTime)),
+    CheckStart=StartTime, CheckEnd=EndTime
+| project Source, SourceTable, Status, Records, LastObserved, CheckStart, CheckEnd,
+    MissingMessageId, MissingRecipient, MissingVisibleSender, MissingEnvelopeSender,
+    MissingSubject, MissingSHA256, MissingFileName, MissingPositiveFileSize, MissingURL,
+    MissingRequiredValues
+| order by Source asc

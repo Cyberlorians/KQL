@@ -2,7 +2,7 @@
 
 **Updated: 2026-10-13 · Email category only**
 
-Expand a child below for its full KQL. Each code block has GitHub's **Copy code to clipboard** button. Expand **Proof** inside each child for recorded tenant results and validation limitations.
+Expand a child below for its full KQL. Each code block has GitHub's **Copy code to clipboard** button.
 
 **Platform:** Microsoft Defender XDR Advanced Hunting (`Timestamp`). Default window: last 30 days. Set the investigation parameters before running. These queries investigate observed email telemetry, not complete mailbox contents.
 
@@ -41,19 +41,6 @@ Expand a child below for its full KQL. Each code block has GitHub's **Copy code 
 > 	ThreatTypes, ThreatNames, AttachmentCount, UrlCount
 > | top MaxRows by Timestamp desc
 > ```
->
-> <details>
-> <summary>Proof — external communications</summary>
->
-> | Recorded live result | Count |
-> |---|---:|
-> | Inbound message-recipient records | 630 |
-> | Outbound message-recipient records | 0 |
-> | Internal message-recipient records (full investigation) | 0 |
->
-> **Positive evidence:** actual inbound `EmailEvents` direction and detailed message-recipient results, not OfficeActivity external-sharing heuristics. **Unverified:** outbound and internal examples were absent in the window. The full investigation and source probes were executed on 2026-10-13; this focused child query is a newly presented derivative and has not been independently rerun.
->
-> </details>
 > </details>
 
 > <details>
@@ -99,24 +86,6 @@ Expand a child below for its full KQL. Each code block has GitHub's **Copy code 
 > 		"Message correlated", "Attachment observed; email missing in scope")
 > | top MaxRows by Timestamp desc
 > ```
->
-> <details>
-> <summary>Proof — attachment filenames and hashes</summary>
->
-> | Recorded live result | Count |
-> |---|---:|
-> | Raw attachment records | 8 |
-> | Records with filenames | 8 |
-> | Records with SHA-256 | 8 |
-> | Records with positive file size | 8 |
-> | Declared-attachment messages / correlated messages | 8 / 8 |
-> | Declared-attachment messages missing metadata | 0 |
-> | Compound real-message filename/hash positive pivot | 1 matching message |
-> | Nonmatching attachment-hash pivot | 0 matching messages |
->
-> **Positive evidence:** the executed full investigation correlated all eight attachment-bearing messages, and a compound test matched a real filename/hash pair together with recipient/message/subject/direction parameters. **Limit:** metadata only, no binary retrieval; SHA1 not assumed. Dynamic detail arrays are capped at 500 per group. These are recorded results from the full investigation/source probes; this focused child query has not been independently rerun.
->
-> </details>
 > </details>
 
 > <details>
@@ -151,18 +120,6 @@ Expand a child below for its full KQL. Each code block has GitHub's **Copy code 
 > 	ThreatTypes, ThreatNames, AttachmentCount, UrlCount
 > | top MaxRows by Timestamp desc
 > ```
->
-> <details>
-> <summary>Proof — subject lines</summary>
->
-> | Recorded live result | Count |
-> |---|---:|
-> | Message-recipient records with actual `Subject` | 630 / 630 |
-> | Compound real-message subject substring pivot | 1 matching message |
->
-> **Positive evidence:** actual email subjects are populated and the full investigation's compound subject-substring filter returned the selected real message. **Unverified:** the new exact-subject branch and this focused child query have not been independently rerun. Tenant subject values are deliberately not published.
->
-> </details>
 > </details>
 
 > <details>
@@ -197,25 +154,11 @@ Expand a child below for its full KQL. Each code block has GitHub's **Copy code 
 > 	AuthenticationDetails, AttachmentCount, UrlCount
 > | top MaxRows by Timestamp desc
 > ```
->
-> <details>
-> <summary>Proof — sender and recipients</summary>
->
-> | Recorded live result | Count |
-> |---|---:|
-> | Records with visible sender | 630 / 630 |
-> | Records with envelope sender | 630 / 630 |
-> | Records with recipient | 630 / 630 |
-> | Compound exact-recipient/message pivot | 1 matching message |
->
-> **Positive evidence:** populated visible/envelope sender and recipient fields on actual message-recipient rows; recipient-side filtering in the full investigation returned a known message. **Unverified:** independently filtered sender branches, the new two-parameter pair filter, and this focused child query have not been rerun. These rows are not complete To/Cc/Bcc headers or evidence of reading.
->
-> </details>
 > </details>
 
 </details>
 
-Full combined query: [Email-Investigation.kql](DFIR/Email-Investigation.kql). Additional executed-test context and limitations: [Email-Verification.md](DFIR/Email-Verification.md). All four focused queries cap displayed rows at `MaxRows`; their absence of results does not establish absence of activity outside retention or ingestion coverage.
+Full combined query: [Email-Investigation.kql](DFIR/Email-Investigation.kql).
 
 <!-- Email-only report. Additional categories intentionally omitted. -->
 

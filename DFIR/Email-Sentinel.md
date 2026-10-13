@@ -10,8 +10,6 @@ Expand a child below for its full KQL. Each code block has GitHub's **Copy code 
 
 **Time column:** Use `TimeGenerated` in Sentinel/Log Analytics and `Timestamp` in XDR Advanced Hunting. Both represent the recorded event time in these email tables; `TimeGenerated` is not the ingestion time. These pages already use the correct column for each platform.
 
-**Platform choices:** [Microsoft Defender XDR](Email-XDR.md) | [Microsoft Sentinel / Log Analytics](Email-Sentinel.md) | [Platform selector](../DFIR-Customer-Ask-Verification.md).
-
 <details open>
 <summary><strong>Email Investigations</strong></summary>
 

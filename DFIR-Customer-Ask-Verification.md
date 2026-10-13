@@ -1,29 +1,349 @@
-# DFIR KQL - Email platform selector
+# DFIR KQL - Email Investigations
 
 **Updated: 2026-10-13 - Email category only**
 
-Choose the platform where the query will run. Each page includes four investigation queries. Default window: last 30 days.
+Expand XDR or Sentinel below, then an investigation category for its full KQL. Default window: last 30 days. Set the investigation parameters before running. These queries investigate observed email telemetry, not complete mailbox contents. Each code block has GitHub's **Copy code to clipboard** button.
 
-**Time column:** XDR Advanced Hunting uses `Timestamp`; Sentinel/Log Analytics uses `TimeGenerated`. Both represent the recorded event time in these email tables, not ingestion time. Choose the matching platform version below.
+**Time column:** XDR Advanced Hunting uses `Timestamp`; Sentinel/Log Analytics uses `TimeGenerated`. Both represent the recorded event time in these email tables, not ingestion time.
 
 <details open>
 <summary><strong>Email Investigations</strong></summary>
 
 > <details>
-> <summary><strong>Microsoft Defender XDR Advanced Hunting</strong></summary>
+> <summary><strong>XDR — Microsoft Defender XDR Advanced Hunting</strong></summary>
 >
-> Uses `Timestamp`. Open the [full XDR email page](DFIR/Email-XDR.md) for external communications, attachment filename/hash pivots, subject pivots, and sender/recipient pivots.
+> Uses `Timestamp`.
+>
+> > <details>
+> > <summary><strong>External communications</strong></summary>
+> >
+> > Filter a specific user or direction, or leave the parameters empty for all external communications. Direction comes from `EmailDirection`, not guessed domain ownership.
+> >
+> > Query file: [DFIR/XDR/Email-External-Communications.kql](DFIR/XDR/Email-External-Communications.kql).
+> >
+> > ```kql
+> > // Platform: Microsoft Defender XDR Advanced Hunting (Timestamp).
+> > // External communications — observed inbound/outbound messages.
+> > let StartTime = ago(30d);
+> > let EndTime = now();
+> > let TargetUser = "";          // Exact visible sender, envelope sender, or recipient.
+> > let Direction = "";           // Inbound or Outbound; empty = both.
+> > let MaxRows = 1000;
+> > let ExternalMessages = materialize(
+> > 	EmailEvents
+> > 	| where Timestamp between (StartTime .. EndTime)
+> > 	| where EmailDirection in~ ("Inbound", "Outbound")
+> > 	| where isempty(Direction) or EmailDirection =~ Direction
+> > 	| where isempty(TargetUser) or SenderFromAddress =~ TargetUser
+> > 		or SenderMailFromAddress =~ TargetUser or RecipientEmailAddress =~ TargetUser
+> > 	| summarize FirstObserved=min(Timestamp), LastObserved=max(Timestamp),
+> > 		ObservedEventCount=count(), arg_max(Timestamp, *)
+> > 		by NetworkMessageId, RecipientEmailAddress
+> > );
+> > ExternalMessages
+> > | project Timestamp, FirstObserved, LastObserved, ObservedEventCount,
+> > 	NetworkMessageId, InternetMessageId, EmailDirection,
+> > 	SenderFromAddress, SenderMailFromAddress, SenderFromDomain,
+> > 	SenderIPv4, SenderIPv6, RecipientEmailAddress, Subject,
+> > 	DeliveryAction, DeliveryLocation, AuthenticationDetails,
+> > 	ThreatTypes, ThreatNames, AttachmentCount, UrlCount
+> > | top MaxRows by Timestamp desc
+> > ```
+> > </details>
+>
+> > <details>
+> > <summary><strong>Specific attachment filenames and hashes</strong></summary>
+> >
+> > Set an exact SHA-256 hash, a filename substring, or both. When both are set, the **same attachment record** must match both. Empty parameters show all observed attachment metadata. Sender/recipient correlation uses message ID plus normalized recipient.
+> >
+> > Query file: [DFIR/XDR/Email-Attachment-Pivot.kql](DFIR/XDR/Email-Attachment-Pivot.kql).
+> >
+> > ```kql
+> > // Platform: Microsoft Defender XDR Advanced Hunting (Timestamp).
+> > // Attachment pivot — matching attachment metadata correlated to its email recipient.
+> > let StartTime = ago(30d);
+> > let EndTime = now();
+> > let AttachmentNameContains = "";  // Case-insensitive filename substring.
+> > let AttachmentSHA256 = "";        // Exact SHA-256, case-insensitive.
+> > let TargetRecipient = "";         // Exact recipient; empty = all.
+> > let MaxRows = 1000;
+> > let MatchingAttachments = materialize(
+> > 	EmailAttachmentInfo
+> > 	| where Timestamp between (StartTime .. EndTime)
+> > 	| where isempty(AttachmentNameContains) or FileName contains AttachmentNameContains
+> > 	| where isempty(AttachmentSHA256) or SHA256 =~ AttachmentSHA256
+> > 	| where isempty(TargetRecipient) or RecipientEmailAddress =~ TargetRecipient
+> > 	| extend RecipientKey=tolower(RecipientEmailAddress)
+> > 	| summarize AttachmentRecords=count(), MatchingAttachments=make_set(
+> > 		bag_pack("FileName", FileName, "SHA256", SHA256, "FileSize", FileSize,
+> > 			"FileType", FileType, "ThreatTypes", ThreatTypes,
+> > 			"ThreatNames", ThreatNames, "Timestamp", Timestamp), 500)
+> > 		by NetworkMessageId, RecipientKey
+> > );
+> > let Messages = EmailEvents
+> > 	| where Timestamp between (StartTime .. EndTime)
+> > 	| where NetworkMessageId in (MatchingAttachments | project NetworkMessageId)
+> > 	| where isempty(TargetRecipient) or RecipientEmailAddress =~ TargetRecipient
+> > 	| summarize FirstObserved=min(Timestamp), LastObserved=max(Timestamp),
+> > 		arg_max(Timestamp, *) by NetworkMessageId, RecipientEmailAddress
+> > 	| extend RecipientKey=tolower(RecipientEmailAddress);
+> > MatchingAttachments
+> > | join kind=leftouter Messages on NetworkMessageId, RecipientKey
+> > | project NetworkMessageId, RecipientKey, RecipientEmailAddress,
+> > 	Timestamp, FirstObserved, LastObserved, InternetMessageId,
+> > 	SenderFromAddress, SenderMailFromAddress, Subject, EmailDirection,
+> > 	DeliveryAction, DeliveryLocation, AttachmentRecords, MatchingAttachments,
+> > 	MessageEvidence=iff(isnotempty(RecipientEmailAddress),
+> > 		"Message correlated", "Attachment observed; email missing in scope")
+> > | top MaxRows by Timestamp desc
+> > ```
+> > </details>
+>
+> > <details>
+> > <summary><strong>Specific Subject lines</strong></summary>
+> >
+> > Set `SubjectText` to the requested subject. Choose exact case-insensitive matching or substring matching. An empty value leaves the subject filter broad.
+> >
+> > Query file: [DFIR/XDR/Email-Subject-Pivot.kql](DFIR/XDR/Email-Subject-Pivot.kql).
+> >
+> > ```kql
+> > // Platform: Microsoft Defender XDR Advanced Hunting (Timestamp).
+> > // Subject pivot — actual email Subject field.
+> > let StartTime = ago(30d);
+> > let EndTime = now();
+> > let SubjectText = "";
+> > let ExactSubject = false;       // true = exact; false = substring.
+> > let TargetRecipient = "";       // Exact recipient; empty = all.
+> > let MaxRows = 1000;
+> > let SubjectMessages = materialize(
+> > 	EmailEvents
+> > 	| where Timestamp between (StartTime .. EndTime)
+> > 	| where isempty(SubjectText)
+> > 		or (ExactSubject and Subject =~ SubjectText)
+> > 		or (not(ExactSubject) and Subject contains SubjectText)
+> > 	| where isempty(TargetRecipient) or RecipientEmailAddress =~ TargetRecipient
+> > 	| summarize FirstObserved=min(Timestamp), LastObserved=max(Timestamp),
+> > 		ObservedEventCount=count(), arg_max(Timestamp, *)
+> > 		by NetworkMessageId, RecipientEmailAddress
+> > );
+> > SubjectMessages
+> > | project Timestamp, FirstObserved, LastObserved, ObservedEventCount,
+> > 	NetworkMessageId, InternetMessageId, Subject,
+> > 	SenderFromAddress, SenderMailFromAddress, RecipientEmailAddress,
+> > 	EmailDirection, DeliveryAction, DeliveryLocation,
+> > 	ThreatTypes, ThreatNames, AttachmentCount, UrlCount
+> > | top MaxRows by Timestamp desc
+> > ```
+> > </details>
+>
+> > <details>
+> > <summary><strong>Specific sender and recipients</strong></summary>
+> >
+> > Set `SenderAddress`, `RecipientAddress`, or both. If both are set, both must match the same message-recipient row. Choose visible From, envelope MAIL FROM, or either sender field.
+> >
+> > Query file: [DFIR/XDR/Email-Sender-Recipient-Pivot.kql](DFIR/XDR/Email-Sender-Recipient-Pivot.kql).
+> >
+> > ```kql
+> > // Platform: Microsoft Defender XDR Advanced Hunting (Timestamp).
+> > // Sender/recipient pivot — distinct visible and envelope sender fields.
+> > let StartTime = ago(30d);
+> > let EndTime = now();
+> > let SenderAddress = "";         // Exact sender; empty = all.
+> > let RecipientAddress = "";      // Exact recipient; empty = all.
+> > let SenderField = "Either";     // From, Envelope, or Either (case-sensitive).
+> > let MaxRows = 1000;
+> > let CommunicationPairs = materialize(
+> > 	EmailEvents
+> > 	| where Timestamp between (StartTime .. EndTime)
+> > 	| where isempty(SenderAddress)
+> > 		or (SenderField in ("From", "Either") and SenderFromAddress =~ SenderAddress)
+> > 		or (SenderField in ("Envelope", "Either") and SenderMailFromAddress =~ SenderAddress)
+> > 	| where isempty(RecipientAddress) or RecipientEmailAddress =~ RecipientAddress
+> > 	| summarize FirstObserved=min(Timestamp), LastObserved=max(Timestamp),
+> > 		ObservedEventCount=count(), arg_max(Timestamp, *)
+> > 		by NetworkMessageId, RecipientEmailAddress
+> > );
+> > CommunicationPairs
+> > | project Timestamp, FirstObserved, LastObserved, ObservedEventCount,
+> > 	NetworkMessageId, InternetMessageId, SenderFromAddress,
+> > 	SenderMailFromAddress, SenderFromDomain, RecipientEmailAddress,
+> > 	Subject, EmailDirection, DeliveryAction, DeliveryLocation,
+> > 	AuthenticationDetails, AttachmentCount, UrlCount
+> > | top MaxRows by Timestamp desc
+> > ```
+> > </details>
+>
 > </details>
 
 > <details>
-> <summary><strong>Microsoft Sentinel / Log Analytics</strong></summary>
+> <summary><strong>Sentinel — Microsoft Sentinel / Log Analytics</strong></summary>
 >
-> Uses `TimeGenerated`. Open the [full Sentinel email page](DFIR/Email-Sentinel.md) for the same four child categories and parameters.
+> Uses `TimeGenerated`.
 >
 > **Requires:** Raw `EmailEvents`, `EmailAttachmentInfo`, `EmailUrlInfo`, and `EmailPostDeliveryEvents` tables from the Defender XDR connector. Alerts/incidents alone are insufficient.
+>
+> > <details>
+> > <summary><strong>External communications</strong></summary>
+> >
+> > Filter a specific user or direction, or leave the parameters empty for all external communications. Direction comes from `EmailDirection`, not guessed domain ownership.
+> >
+> > Query file: [DFIR/Sentinel/Email-External-Communications.kql](DFIR/Sentinel/Email-External-Communications.kql).
+> >
+> > ```kql
+> > // Platform: Microsoft Sentinel / Log Analytics (TimeGenerated).
+> > // External communications — observed inbound/outbound messages.
+> > let StartTime = ago(30d);
+> > let EndTime = now();
+> > let TargetUser = "";          // Exact visible sender, envelope sender, or recipient.
+> > let Direction = "";           // Inbound or Outbound; empty = both.
+> > let MaxRows = 1000;
+> > let ExternalMessages = materialize(
+> > 	EmailEvents
+> > 	| where TimeGenerated between (StartTime .. EndTime)
+> > 	| where EmailDirection in~ ("Inbound", "Outbound")
+> > 	| where isempty(Direction) or EmailDirection =~ Direction
+> > 	| where isempty(TargetUser) or SenderFromAddress =~ TargetUser
+> > 		or SenderMailFromAddress =~ TargetUser or RecipientEmailAddress =~ TargetUser
+> > 	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
+> > 		ObservedEventCount=count(), arg_max(TimeGenerated, *)
+> > 		by NetworkMessageId, RecipientEmailAddress
+> > );
+> > ExternalMessages
+> > | project TimeGenerated, FirstObserved, LastObserved, ObservedEventCount,
+> > 	NetworkMessageId, InternetMessageId, EmailDirection,
+> > 	SenderFromAddress, SenderMailFromAddress, SenderFromDomain,
+> > 	SenderIPv4, SenderIPv6, RecipientEmailAddress, Subject,
+> > 	DeliveryAction, DeliveryLocation, AuthenticationDetails,
+> > 	ThreatTypes, ThreatNames, AttachmentCount, UrlCount
+> > | top MaxRows by TimeGenerated desc
+> > ```
+> > </details>
+>
+> > <details>
+> > <summary><strong>Specific attachment filenames and hashes</strong></summary>
+> >
+> > Set an exact SHA-256 hash, a filename substring, or both. When both are set, the **same attachment record** must match both. Empty parameters show all observed attachment metadata. Sender/recipient correlation uses message ID plus normalized recipient.
+> >
+> > Query file: [DFIR/Sentinel/Email-Attachment-Pivot.kql](DFIR/Sentinel/Email-Attachment-Pivot.kql).
+> >
+> > ```kql
+> > // Platform: Microsoft Sentinel / Log Analytics (TimeGenerated).
+> > // Attachment pivot — matching attachment metadata correlated to its email recipient.
+> > let StartTime = ago(30d);
+> > let EndTime = now();
+> > let AttachmentNameContains = "";  // Case-insensitive filename substring.
+> > let AttachmentSHA256 = "";        // Exact SHA-256, case-insensitive.
+> > let TargetRecipient = "";         // Exact recipient; empty = all.
+> > let MaxRows = 1000;
+> > let MatchingAttachments = materialize(
+> > 	EmailAttachmentInfo
+> > 	| where TimeGenerated between (StartTime .. EndTime)
+> > 	| where isempty(AttachmentNameContains) or FileName contains AttachmentNameContains
+> > 	| where isempty(AttachmentSHA256) or SHA256 =~ AttachmentSHA256
+> > 	| where isempty(TargetRecipient) or RecipientEmailAddress =~ TargetRecipient
+> > 	| extend RecipientKey=tolower(RecipientEmailAddress)
+> > 	| summarize AttachmentRecords=count(), MatchingAttachments=make_set(
+> > 		bag_pack("FileName", FileName, "SHA256", SHA256, "FileSize", FileSize,
+> > 			"FileType", FileType, "ThreatTypes", ThreatTypes,
+> > 			"ThreatNames", ThreatNames, "TimeGenerated", TimeGenerated), 500)
+> > 		by NetworkMessageId, RecipientKey
+> > );
+> > let Messages = EmailEvents
+> > 	| where TimeGenerated between (StartTime .. EndTime)
+> > 	| where NetworkMessageId in (MatchingAttachments | project NetworkMessageId)
+> > 	| where isempty(TargetRecipient) or RecipientEmailAddress =~ TargetRecipient
+> > 	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
+> > 		arg_max(TimeGenerated, *) by NetworkMessageId, RecipientEmailAddress
+> > 	| extend RecipientKey=tolower(RecipientEmailAddress);
+> > MatchingAttachments
+> > | join kind=leftouter Messages on NetworkMessageId, RecipientKey
+> > | project NetworkMessageId, RecipientKey, RecipientEmailAddress,
+> > 	TimeGenerated, FirstObserved, LastObserved, InternetMessageId,
+> > 	SenderFromAddress, SenderMailFromAddress, Subject, EmailDirection,
+> > 	DeliveryAction, DeliveryLocation, AttachmentRecords, MatchingAttachments,
+> > 	MessageEvidence=iff(isnotempty(RecipientEmailAddress),
+> > 		"Message correlated", "Attachment observed; email missing in scope")
+> > | top MaxRows by TimeGenerated desc
+> > ```
+> > </details>
+>
+> > <details>
+> > <summary><strong>Specific Subject lines</strong></summary>
+> >
+> > Set `SubjectText` to the requested subject. Choose exact case-insensitive matching or substring matching. An empty value leaves the subject filter broad.
+> >
+> > Query file: [DFIR/Sentinel/Email-Subject-Pivot.kql](DFIR/Sentinel/Email-Subject-Pivot.kql).
+> >
+> > ```kql
+> > // Platform: Microsoft Sentinel / Log Analytics (TimeGenerated).
+> > // Subject pivot — actual email Subject field.
+> > let StartTime = ago(30d);
+> > let EndTime = now();
+> > let SubjectText = "";
+> > let ExactSubject = false;       // true = exact; false = substring.
+> > let TargetRecipient = "";       // Exact recipient; empty = all.
+> > let MaxRows = 1000;
+> > let SubjectMessages = materialize(
+> > 	EmailEvents
+> > 	| where TimeGenerated between (StartTime .. EndTime)
+> > 	| where isempty(SubjectText)
+> > 		or (ExactSubject and Subject =~ SubjectText)
+> > 		or (not(ExactSubject) and Subject contains SubjectText)
+> > 	| where isempty(TargetRecipient) or RecipientEmailAddress =~ TargetRecipient
+> > 	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
+> > 		ObservedEventCount=count(), arg_max(TimeGenerated, *)
+> > 		by NetworkMessageId, RecipientEmailAddress
+> > );
+> > SubjectMessages
+> > | project TimeGenerated, FirstObserved, LastObserved, ObservedEventCount,
+> > 	NetworkMessageId, InternetMessageId, Subject,
+> > 	SenderFromAddress, SenderMailFromAddress, RecipientEmailAddress,
+> > 	EmailDirection, DeliveryAction, DeliveryLocation,
+> > 	ThreatTypes, ThreatNames, AttachmentCount, UrlCount
+> > | top MaxRows by TimeGenerated desc
+> > ```
+> > </details>
+>
+> > <details>
+> > <summary><strong>Specific sender and recipients</strong></summary>
+> >
+> > Set `SenderAddress`, `RecipientAddress`, or both. If both are set, both must match the same message-recipient row. Choose visible From, envelope MAIL FROM, or either sender field.
+> >
+> > Query file: [DFIR/Sentinel/Email-Sender-Recipient-Pivot.kql](DFIR/Sentinel/Email-Sender-Recipient-Pivot.kql).
+> >
+> > ```kql
+> > // Platform: Microsoft Sentinel / Log Analytics (TimeGenerated).
+> > // Sender/recipient pivot — distinct visible and envelope sender fields.
+> > let StartTime = ago(30d);
+> > let EndTime = now();
+> > let SenderAddress = "";         // Exact sender; empty = all.
+> > let RecipientAddress = "";      // Exact recipient; empty = all.
+> > let SenderField = "Either";     // From, Envelope, or Either (case-sensitive).
+> > let MaxRows = 1000;
+> > let CommunicationPairs = materialize(
+> > 	EmailEvents
+> > 	| where TimeGenerated between (StartTime .. EndTime)
+> > 	| where isempty(SenderAddress)
+> > 		or (SenderField in ("From", "Either") and SenderFromAddress =~ SenderAddress)
+> > 		or (SenderField in ("Envelope", "Either") and SenderMailFromAddress =~ SenderAddress)
+> > 	| where isempty(RecipientAddress) or RecipientEmailAddress =~ RecipientAddress
+> > 	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
+> > 		ObservedEventCount=count(), arg_max(TimeGenerated, *)
+> > 		by NetworkMessageId, RecipientEmailAddress
+> > );
+> > CommunicationPairs
+> > | project TimeGenerated, FirstObserved, LastObserved, ObservedEventCount,
+> > 	NetworkMessageId, InternetMessageId, SenderFromAddress,
+> > 	SenderMailFromAddress, SenderFromDomain, RecipientEmailAddress,
+> > 	Subject, EmailDirection, DeliveryAction, DeliveryLocation,
+> > 	AuthenticationDetails, AttachmentCount, UrlCount
+> > | top MaxRows by TimeGenerated desc
+> > ```
+> > </details>
+>
 > </details>
 
 </details>
 
-<!-- Email-only platform selector. Additional categories intentionally omitted. -->
+<!-- Email-only page. Additional categories intentionally omitted. -->
 

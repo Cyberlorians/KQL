@@ -28,14 +28,14 @@ A query is marked **Executed** only after it ran successfully against the live w
 | 2 | Teams calls and meetings — join/leave, duration, shared activity, camera/mute | `OfficeActivity` | **Executed; data not confirmed** | Query succeeded; all four evidence counters returned 0 |
 | 3 | SharePoint — sites/pages, file activity, sharing | `OfficeActivity` | **Data confirmed** | Site/page evidence 8; file activity 6; sharing evidence 1,968 |
 | 4 | OneDrive — user activity, sync, file activity | `OfficeActivity` | **Partial** | 5 OneDrive-matching rows; user activity 5; file activity 4; sync evidence 0 |
-| 5 | Device logon events | `DeviceEvents` | **Data confirmed** | 16 logon-action matches; account evidence 139,751; session evidence 1,497 |
-| 6 | User logon events | `SigninLogs`, `IdentityLogonEvents` | **Data confirmed** | `SigninLogs` 463; `IdentityLogonEvents` 59 |
-| 7 | User device activity — USB, hardware, file origin, DLP, process, scripts, registry, scheduled tasks, tampering | `DeviceEvents` | **Partial** | USB 5,940; hardware 477; process 125,326; registry 9; other requested heuristics returned 0 |
+| 5 | Device logon events | `DeviceEvents` | **Data confirmed** | 16 logon-action matches; account evidence 139,750; session evidence 1,498 |
+| 6 | User logon events | `SigninLogs`, `IdentityLogonEvents` | **Data confirmed** | `SigninLogs` 465; `IdentityLogonEvents` 59 |
+| 7 | User device activity — USB, hardware, file origin, DLP, process, scripts, registry, scheduled tasks, tampering | `DeviceEvents` | **Partial** | USB 5,939; hardware 477; process 125,327; registry 9; other requested heuristics returned 0 |
 | 8 | Web activity — sites visited and browsers used | `DeviceEvents` | **Partial** | URL/site evidence 1,243; browser-action heuristic 0 |
 | 9 | Network-share activity — access, create, modify, delete | `SecurityEvent` | **Executed; data not confirmed** | Tested Event IDs 5140/5142/5143/5144/5145 returned 0 rows |
 | 10 | User activity event timeline | `OfficeActivity` + `DeviceEvents` | **Executed; requires target** | Normalized union succeeded; placeholder UPN returned no rows |
 | 11 | User identity and access context | `AuditLogs`, `IdentityDirectoryEvents`, `IdentityInfo` | **Data confirmed** | `AuditLogs` 11,865; `IdentityDirectoryEvents` 173; `IdentityInfo` 558 |
-| 12 | File metadata — filename, extension, hash, size | `DeviceEvents`, `OfficeActivity` | **Data confirmed** | Endpoint filenames 11,204; extensions 11,154; hashes 10,359; sizes 36,045; OfficeActivity filenames 6; extensions 1 |
+| 12 | File metadata — filename, extension, hash, size | `DeviceEvents`, `OfficeActivity` | **Data confirmed** | Endpoint filenames 11,206; extensions 11,156; hashes 10,361; sizes 36,045; OfficeActivity filenames 6; extensions 1 |
 
 ## Repository grounding
 

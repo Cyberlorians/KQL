@@ -1,0 +1,26 @@
+// External communications
+// Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
+let StartTime = ago(30d);
+let EndTime = now();
+let TargetUser = "";          // Exact visible sender, envelope sender, or recipient.
+let Direction = "";           // Inbound or Outbound; empty = both.
+let MaxRows = 1000;
+let ExternalMessages = materialize(
+	EmailEvents
+	| where TimeGenerated between (StartTime .. EndTime)
+	| where EmailDirection in~ ("Inbound", "Outbound")
+	| where isempty(Direction) or EmailDirection =~ Direction
+	| where isempty(TargetUser) or SenderFromAddress =~ TargetUser
+		or SenderMailFromAddress =~ TargetUser or RecipientEmailAddress =~ TargetUser
+	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
+		ObservedEventCount=count(), arg_max(TimeGenerated, *)
+		by NetworkMessageId, RecipientEmailAddress
+);
+ExternalMessages
+| project TimeGenerated, FirstObserved, LastObserved, ObservedEventCount,
+	NetworkMessageId, InternetMessageId, EmailDirection,
+	SenderFromAddress, SenderMailFromAddress, SenderFromDomain,
+	SenderIPv4, SenderIPv6, RecipientEmailAddress, Subject,
+	DeliveryAction, DeliveryLocation, AuthenticationDetails,
+	ThreatTypes, ThreatNames, AttachmentCount, UrlCount
+| top MaxRows by TimeGenerated desc

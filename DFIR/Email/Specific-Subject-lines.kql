@@ -1,0 +1,26 @@
+// Specific Subject lines
+// Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
+let StartTime = ago(30d);
+let EndTime = now();
+let SubjectText = "";
+let ExactSubject = false;       // true = exact; false = substring.
+let TargetRecipient = "";       // Exact recipient; empty = all.
+let MaxRows = 1000;
+let SubjectMessages = materialize(
+	EmailEvents
+	| where TimeGenerated between (StartTime .. EndTime)
+	| where isempty(SubjectText)
+		or (ExactSubject and Subject =~ SubjectText)
+		or (not(ExactSubject) and Subject contains SubjectText)
+	| where isempty(TargetRecipient) or RecipientEmailAddress =~ TargetRecipient
+	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
+		ObservedEventCount=count(), arg_max(TimeGenerated, *)
+		by NetworkMessageId, RecipientEmailAddress
+);
+SubjectMessages
+| project TimeGenerated, FirstObserved, LastObserved, ObservedEventCount,
+	NetworkMessageId, InternetMessageId, Subject,
+	SenderFromAddress, SenderMailFromAddress, RecipientEmailAddress,
+	EmailDirection, DeliveryAction, DeliveryLocation,
+	ThreatTypes, ThreatNames, AttachmentCount, UrlCount
+| top MaxRows by TimeGenerated desc

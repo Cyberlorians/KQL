@@ -6,6 +6,8 @@ Expand a child below for its full KQL. Each code block has GitHub's **Copy code 
 
 **Platform:** Microsoft Defender XDR Advanced Hunting (`Timestamp`). Default window: last 30 days. Set the investigation parameters before running. These queries investigate observed email telemetry, not complete mailbox contents.
 
+**Time column:** Use `Timestamp` in XDR Advanced Hunting and `TimeGenerated` in Sentinel/Log Analytics. Both represent the recorded event time in these email tables; `TimeGenerated` is not the ingestion time. These pages already use the correct column for each platform.
+
 **Platform choices:** [Microsoft Defender XDR](Email-XDR.md) | [Microsoft Sentinel / Log Analytics](Email-Sentinel.md) | [Platform selector](../DFIR-Customer-Ask-Verification.md).
 
 <details open>
@@ -173,7 +175,5 @@ Expand a child below for its full KQL. Each code block has GitHub's **Copy code 
 </details>
 
 Full combined query (XDR canonical): [Email-Investigation.kql](Email-Investigation.kql).
-
-KQL metadata checks: [XDR/Email-KQL-Checks.kql](XDR/Email-KQL-Checks.kql). One aggregate row per source reports `PASS`, `PENDING`, or `MISSING`; no scoped rows show `LastObserved` as `Not observed`. These checks do not replace investigation pivots or establish complete coverage. Optional threat/IP fields are not failure criteria. All four source tables must exist; an unavailable table is a schema error, not `PENDING`.
 
 <!-- Email-only page. Additional categories intentionally omitted. -->

@@ -8,6 +8,8 @@ Expand a child below for its full KQL. Each code block has GitHub's **Copy code 
 
 **Prerequisite:** Ingest the raw Microsoft Defender for Office 365 events into the Sentinel workspace: `EmailEvents`, `EmailAttachmentInfo`, `EmailUrlInfo`, and `EmailPostDeliveryEvents`. Configure the Microsoft Defender XDR connector's raw-event collection for these tables; alerts/incidents alone are insufficient. Table availability, retention, permissions, and ingestion latency determine the usable scope. These versions use `TimeGenerated` throughout, including attachment and post-delivery bag keys; all other investigation logic is preserved.
 
+**Time column:** Use `TimeGenerated` in Sentinel/Log Analytics and `Timestamp` in XDR Advanced Hunting. Both represent the recorded event time in these email tables; `TimeGenerated` is not the ingestion time. These pages already use the correct column for each platform.
+
 **Platform choices:** [Microsoft Defender XDR](Email-XDR.md) | [Microsoft Sentinel / Log Analytics](Email-Sentinel.md) | [Platform selector](../DFIR-Customer-Ask-Verification.md).
 
 <details open>
@@ -175,7 +177,5 @@ Expand a child below for its full KQL. Each code block has GitHub's **Copy code 
 </details>
 
 Full combined query: [Sentinel/Email-Investigation.kql](Sentinel/Email-Investigation.kql).
-
-KQL metadata checks: [Sentinel/Email-KQL-Checks.kql](Sentinel/Email-KQL-Checks.kql). One aggregate row per source reports `PASS`, `PENDING`, or `MISSING`; no scoped rows show `LastObserved` as `Not observed`. These checks do not replace investigation pivots or establish complete coverage. Optional threat/IP fields are not failure criteria. All four source tables must exist; an unavailable table is a schema error, not `PENDING`.
 
 <!-- Email-only page. Additional categories intentionally omitted. -->

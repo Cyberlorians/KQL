@@ -174,6 +174,4 @@ Expand a child below for its full KQL. Each code block has GitHub's **Copy code 
 
 </details>
 
-Full combined query (XDR canonical): [Email-Investigation.kql](Email-Investigation.kql).
-
 <!-- Email-only page. Additional categories intentionally omitted. -->

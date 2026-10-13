@@ -2,20 +2,20 @@
 
 **Status: DRAFTS — live execution confirmed; positive seeded coverage validation pending (2026-10-13).** All seven exact saved queries executed successfully against live Sentinel `OfficeActivity`. OneDrive User File activity returned 2 records; the other six returned zero. Execution PASS is not positive coverage PASS, and an empty result is NOT proof that an action did not occur. All other uncompleted tests below remain PENDING.
 
-Use the [DFIR Investigations landing page](README.md) as the customer entry point. This guide documents collection and validation, not a second query catalog with embedded KQL.
+Queries are on the [DFIR Customer Investigations](DFIR-Customer-Investigations.md) page. This guide documents collection and validation, not a second query catalog with embedded KQL.
 
 ## Customer hierarchy
 
 - **Microsoft Teams — Calls and Meeting activities**
-  - **Join/Leave times** — [DFIR/Microsoft Teams/Join-Leave-times.kql](Microsoft%20Teams/Join-Leave-times.kql)
-  - **Meeting Duration** — [DFIR/Microsoft Teams/Meeting-Duration.kql](Microsoft%20Teams/Meeting-Duration.kql)
-  - **SharedActivities: was camera or screen shared, mute/unmute etc** — [DFIR/Microsoft Teams/SharedActivities.kql](Microsoft%20Teams/SharedActivities.kql)
+  - **Join/Leave times** — [Microsoft Teams/Join-Leave-times.kql](../Microsoft%20Teams/Join-Leave-times.kql)
+  - **Meeting Duration** — [Microsoft Teams/Meeting-Duration.kql](../Microsoft%20Teams/Meeting-Duration.kql)
+  - **SharedActivities: was camera or screen shared, mute/unmute etc** — [Microsoft Teams/SharedActivities.kql](../Microsoft%20Teams/SharedActivities.kql)
 - **SharePoint Activity**
-  - **Site/Page accessed/created/modified** — [DFIR/SharePoint/Site-Page-accessed-created-modified.kql](SharePoint/Site-Page-accessed-created-modified.kql)
-  - **Files uploaded/downloaded from a SharePoint site** — [DFIR/SharePoint/Files-uploaded-downloaded-from-a-SharePoint-site.kql](SharePoint/Files-uploaded-downloaded-from-a-SharePoint-site.kql)
+  - **Site/Page accessed/created/modified** — [SharePoint/Site-Page-accessed-created-modified.kql](../SharePoint/Site-Page-accessed-created-modified.kql)
+  - **Files uploaded/downloaded from a SharePoint site** — [SharePoint/Files-uploaded-downloaded-from-a-SharePoint-site.kql](../SharePoint/Files-uploaded-downloaded-from-a-SharePoint-site.kql)
 - **OneDrive**
-  - **User File activity** — [DFIR/OneDrive/User-File-activity.kql](OneDrive/User-File-activity.kql)
-  - **Sync activity** — [DFIR/OneDrive/Sync-activity.kql](OneDrive/Sync-activity.kql)
+  - **User File activity** — [OneDrive/User-File-activity.kql](../OneDrive/User-File-activity.kql)
+  - **Sync activity** — [OneDrive/Sync-activity.kql](../OneDrive/Sync-activity.kql)
 
 ## Observed live execution — 2026-10-13
 

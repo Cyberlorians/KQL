@@ -1,16 +1,24 @@
 // Teams Calls and Meeting activities > SharedActivities: was camera or screen shared, mute/unmute etc
 // Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
-// Returns StartShare / StopShare events only. Camera on/off and mute/unmute are not recorded in this table.
-let StartTime = ago(30d);
-let EndTime = now();
-let TargetUser = "";    // Exact UPN, case-insensitive; empty = all users.
-let TargetCallId = "";  // Exact CallId; empty = all calls.
-let MaxRows = 1000;
+// Returns every ActivityType by default; set TargetActivityTypes to ["StartShare", "StopShare"] to see screen sharing only.
+// Camera on/off and mute/unmute have not been observed as ActivityTypes in this tenant's data.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all users, all calls, all activity types).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"]
+let TargetCallIds = dynamic([]);        // Example: ["11111111-2222-3333-4444-555555555555"] (CallId from a previous result)
+let TargetActivityTypes = dynamic([]);  // Example: ["StartShare", "StopShare"] (empty = every ActivityType, so any camera/mute type would show here)
+//
+// ----- Part 1: Filter Call Activity -----
+//
 CallActivityEvents
 | where ActivityTimestamp between (StartTime .. EndTime)
-| where ActivityType in ("StartShare", "StopShare")
-| where isempty(TargetUser) or ActivityInitiatorUpn =~ TargetUser
-| where isempty(TargetCallId) or CallId =~ TargetCallId
-| project ActivityTimestamp, ActivityType, ActivityInitiatorUpn, ActivityInitiatorDisplayName,
-    CallSchedulingType, CallId, ThreadId, CallJoinUrl, ActivityId
-| top min_of(MaxRows, 1000) by ActivityTimestamp desc
+| where (array_length(TargetUsers) == 0 or ActivityInitiatorUpn in~ (TargetUsers))
+| where (array_length(TargetCallIds) == 0 or CallId in~ (TargetCallIds))
+| where (array_length(TargetActivityTypes) == 0 or ActivityType in~ (TargetActivityTypes))
+| project ActivityTimestamp, ActivityType, ActivityInitiatorUpn, ActivityInitiatorDisplayName, ActivityInitiatorId,
+    OriginatorUpn, OriginatorUserDisplayName, CallSchedulingType, CallId, ThreadId, CallJoinUrl, ActivityId
+| top 1000 by ActivityTimestamp desc

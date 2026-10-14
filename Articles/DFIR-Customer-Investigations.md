@@ -16,31 +16,35 @@ Results are observed events, not complete mailbox or file contents.
 >
 > ```kql
 > // External communications
+> // Objective: Lists email sent to or received from outside the organization (Inbound and Outbound) with the sender,
+> // recipient, subject, delivery and threat details. Internal-only mail is excluded by design.
 > // Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
-> let StartTime = ago(30d);
-> let EndTime = now();
-> let TargetUser = "";          // Exact visible sender, envelope sender, or recipient.
-> let Direction = "";           // Inbound or Outbound; empty = both.
-> let MaxRows = 1000;
-> let ExternalMessages = materialize(
-> 	EmailEvents
-> 	| where TimeGenerated between (StartTime .. EndTime)
-> 	| where EmailDirection in~ ("Inbound", "Outbound")
-> 	| where isempty(Direction) or EmailDirection =~ Direction
-> 	| where isempty(TargetUser) or SenderFromAddress =~ TargetUser
-> 		or SenderMailFromAddress =~ TargetUser or RecipientEmailAddress =~ TargetUser
-> 	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
-> 		ObservedEventCount=count(), arg_max(TimeGenerated, *)
-> 		by NetworkMessageId, RecipientEmailAddress
-> );
-> ExternalMessages
-> | project TimeGenerated, FirstObserved, LastObserved, ObservedEventCount,
-> 	NetworkMessageId, InternetMessageId, EmailDirection,
-> 	SenderFromAddress, SenderMailFromAddress, SenderFromDomain,
-> 	SenderIPv4, SenderIPv6, RecipientEmailAddress, Subject,
-> 	DeliveryAction, DeliveryLocation, AuthenticationDetails,
-> 	ThreatTypes, ThreatNames, AttachmentCount, UrlCount
-> | top MaxRows by TimeGenerated desc
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, both directions).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"] (matches visible sender, envelope sender, or recipient)
+> let TargetDirections = dynamic([]);     // Example: ["Outbound"] (Inbound or Outbound; empty = both)
+> //
+> // ----- Part 1: Filter external email -----
+> //
+> EmailEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where EmailDirection in~ ("Inbound", "Outbound")
+> | where (array_length(TargetDirections) == 0 or EmailDirection in~ (TargetDirections))
+> | where (array_length(TargetUsers) == 0 or SenderFromAddress in~ (TargetUsers)
+>     or SenderMailFromAddress in~ (TargetUsers) or RecipientEmailAddress in~ (TargetUsers))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, EmailDirection, SenderFromAddress, SenderMailFromAddress,
+>     RecipientEmailAddress, Subject, SenderFromDomain, SenderIPv4, SenderIPv6,
+>     DeliveryAction, DeliveryLocation, AuthenticationDetails,
+>     ThreatTypes, ThreatNames, AttachmentCount, UrlCount,
+>     NetworkMessageId, InternetMessageId
+> | top 1000 by TimeGenerated desc
 > ```
 > </details>
 
@@ -51,42 +55,34 @@ Results are observed events, not complete mailbox or file contents.
 >
 > ```kql
 > // Specific attachment filenames and hashes
+> // Objective: Finds email attachments by filename or SHA-256, showing the sender, recipient, FileName, SHA256,
+> // FileSize, FileType and threat details for each attachment.
 > // Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
-> let StartTime = ago(30d);
-> let EndTime = now();
-> let AttachmentNameContains = "";  // Case-insensitive filename substring.
-> let AttachmentSHA256 = "";        // Exact SHA-256, case-insensitive.
-> let TargetRecipient = "";         // Exact recipient; empty = all.
-> let MaxRows = 1000;
-> let MatchingAttachments = materialize(
-> 	EmailAttachmentInfo
-> 	| where TimeGenerated between (StartTime .. EndTime)
-> 	| where isempty(AttachmentNameContains) or FileName contains AttachmentNameContains
-> 	| where isempty(AttachmentSHA256) or SHA256 =~ AttachmentSHA256
-> 	| where isempty(TargetRecipient) or RecipientEmailAddress =~ TargetRecipient
-> 	| extend RecipientKey=tolower(RecipientEmailAddress)
-> 	| summarize AttachmentRecords=count(), MatchingAttachments=make_set(
-> 		bag_pack("FileName", FileName, "SHA256", SHA256, "FileSize", FileSize,
-> 			"FileType", FileType, "ThreatTypes", ThreatTypes,
-> 			"ThreatNames", ThreatNames, "TimeGenerated", TimeGenerated), 500)
-> 		by NetworkMessageId, RecipientKey
-> );
-> let Messages = EmailEvents
-> 	| where TimeGenerated between (StartTime .. EndTime)
-> 	| where NetworkMessageId in (MatchingAttachments | project NetworkMessageId)
-> 	| where isempty(TargetRecipient) or RecipientEmailAddress =~ TargetRecipient
-> 	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
-> 		arg_max(TimeGenerated, *) by NetworkMessageId, RecipientEmailAddress
-> 	| extend RecipientKey=tolower(RecipientEmailAddress);
-> MatchingAttachments
-> | join kind=leftouter Messages on NetworkMessageId, RecipientKey
-> | project NetworkMessageId, RecipientKey, RecipientEmailAddress,
-> 	TimeGenerated, FirstObserved, LastObserved, InternetMessageId,
-> 	SenderFromAddress, SenderMailFromAddress, Subject, EmailDirection,
-> 	DeliveryAction, DeliveryLocation, AttachmentRecords, MatchingAttachments,
-> 	MessageEvidence=iff(isnotempty(RecipientEmailAddress),
-> 		"Message correlated", "Attachment observed; email missing in scope")
-> | top MaxRows by TimeGenerated desc
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (every attachment, all users).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetFileNames = dynamic([]);      // Example: ["invoice.pdf", "payroll"] (case-insensitive whole-word match on the filename, not partial words)
+> let TargetSHA256 = dynamic([]);         // Example: ["e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"] (matches sender or recipient)
+> //
+> // ----- Part 1: Filter attachments -----
+> //
+> EmailAttachmentInfo
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where (array_length(TargetFileNames) == 0 or FileName has_any (TargetFileNames))
+> | where (array_length(TargetSHA256) == 0 or SHA256 in~ (TargetSHA256))
+> | where (array_length(TargetUsers) == 0 or SenderFromAddress in~ (TargetUsers)
+>     or RecipientEmailAddress in~ (TargetUsers))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, SenderFromAddress, RecipientEmailAddress,
+>     FileName, SHA256, FileSize, FileType, ThreatTypes, ThreatNames,
+>     NetworkMessageId
+> | top 1000 by TimeGenerated desc
 > ```
 > </details>
 
@@ -97,31 +93,33 @@ Results are observed events, not complete mailbox or file contents.
 >
 > ```kql
 > // Specific Subject lines
+> // Objective: Finds email by subject line, showing the subject, sender, recipient, direction,
+> // delivery result, threat details and attachment/URL counts.
 > // Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
-> let StartTime = ago(30d);
-> let EndTime = now();
-> let SubjectText = "";
-> let ExactSubject = false;       // true = exact; false = substring.
-> let TargetRecipient = "";       // Exact recipient; empty = all.
-> let MaxRows = 1000;
-> let SubjectMessages = materialize(
-> 	EmailEvents
-> 	| where TimeGenerated between (StartTime .. EndTime)
-> 	| where isempty(SubjectText)
-> 		or (ExactSubject and Subject =~ SubjectText)
-> 		or (not(ExactSubject) and Subject contains SubjectText)
-> 	| where isempty(TargetRecipient) or RecipientEmailAddress =~ TargetRecipient
-> 	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
-> 		ObservedEventCount=count(), arg_max(TimeGenerated, *)
-> 		by NetworkMessageId, RecipientEmailAddress
-> );
-> SubjectMessages
-> | project TimeGenerated, FirstObserved, LastObserved, ObservedEventCount,
-> 	NetworkMessageId, InternetMessageId, Subject,
-> 	SenderFromAddress, SenderMailFromAddress, RecipientEmailAddress,
-> 	EmailDirection, DeliveryAction, DeliveryLocation,
-> 	ThreatTypes, ThreatNames, AttachmentCount, UrlCount
-> | top MaxRows by TimeGenerated desc
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (every subject, all users).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetSubjects = dynamic([]);       // Example: ["Invoice", "Password reset"] (case-insensitive whole-word/phrase match, not partial words)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"] (matches visible sender, envelope sender, or recipient)
+> //
+> // ----- Part 1: Filter by subject and user -----
+> //
+> EmailEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where (array_length(TargetSubjects) == 0 or Subject has_any (TargetSubjects))
+> | where (array_length(TargetUsers) == 0 or SenderFromAddress in~ (TargetUsers)
+>     or SenderMailFromAddress in~ (TargetUsers) or RecipientEmailAddress in~ (TargetUsers))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, SenderFromAddress, SenderMailFromAddress, RecipientEmailAddress,
+>     Subject, EmailDirection, DeliveryAction, DeliveryLocation,
+>     ThreatTypes, ThreatNames, AttachmentCount, UrlCount,
+>     NetworkMessageId, InternetMessageId
+> | top 1000 by TimeGenerated desc
 > ```
 > </details>
 
@@ -132,31 +130,33 @@ Results are observed events, not complete mailbox or file contents.
 >
 > ```kql
 > // Specific sender and recipients
+> // Objective: Shows who emailed whom: visible (From) and envelope (MailFrom) sender, recipient, subject,
+> // direction (Inbound, Outbound or Intra-org), delivery result and attachment/URL counts.
 > // Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
-> let StartTime = ago(30d);
-> let EndTime = now();
-> let SenderAddress = "";         // Exact sender; empty = all.
-> let RecipientAddress = "";      // Exact recipient; empty = all.
-> let SenderField = "Either";     // From, Envelope, or Either (case-sensitive).
-> let MaxRows = 1000;
-> let CommunicationPairs = materialize(
-> 	EmailEvents
-> 	| where TimeGenerated between (StartTime .. EndTime)
-> 	| where isempty(SenderAddress)
-> 		or (SenderField in ("From", "Either") and SenderFromAddress =~ SenderAddress)
-> 		or (SenderField in ("Envelope", "Either") and SenderMailFromAddress =~ SenderAddress)
-> 	| where isempty(RecipientAddress) or RecipientEmailAddress =~ RecipientAddress
-> 	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
-> 		ObservedEventCount=count(), arg_max(TimeGenerated, *)
-> 		by NetworkMessageId, RecipientEmailAddress
-> );
-> CommunicationPairs
-> | project TimeGenerated, FirstObserved, LastObserved, ObservedEventCount,
-> 	NetworkMessageId, InternetMessageId, SenderFromAddress,
-> 	SenderMailFromAddress, SenderFromDomain, RecipientEmailAddress,
-> 	Subject, EmailDirection, DeliveryAction, DeliveryLocation,
-> 	AuthenticationDetails, AttachmentCount, UrlCount
-> | top MaxRows by TimeGenerated desc
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all senders, all recipients).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetSenders = dynamic([]);        // Example: ["sender@contoso.com", "sender2@fabrikam.com"] (matches visible sender or envelope sender)
+> let TargetRecipients = dynamic([]);     // Example: ["user@contoso.com", "user2@contoso.com"]
+> //
+> // ----- Part 1: Filter sender and recipient -----
+> //
+> EmailEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where (array_length(TargetSenders) == 0 or SenderFromAddress in~ (TargetSenders)
+>     or SenderMailFromAddress in~ (TargetSenders))
+> | where (array_length(TargetRecipients) == 0 or RecipientEmailAddress in~ (TargetRecipients))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, EmailDirection, SenderFromAddress, SenderMailFromAddress,
+>     RecipientEmailAddress, Subject, SenderFromDomain,
+>     DeliveryAction, DeliveryLocation, AuthenticationDetails,
+>     AttachmentCount, UrlCount, NetworkMessageId, InternetMessageId
+> | top 1000 by TimeGenerated desc
 > ```
 > </details>
 
@@ -175,20 +175,28 @@ Results are observed events, not complete mailbox or file contents.
 > ```kql
 > // Teams Calls and Meeting activities > Join/Leave times
 > // Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
-> // One row per JoinCall / LeaveCall event. A join or leave can be reported more than once (different ActivityId).
-> let StartTime = ago(30d);
-> let EndTime = now();
-> let TargetUser = "";    // Exact UPN, case-insensitive; empty = all users.
-> let TargetCallId = "";  // Exact CallId; empty = all calls.
-> let MaxRows = 1000;
+> // One row per call activity event (JoinCall, LeaveCall and any other ActivityType); set TargetActivityTypes to ["JoinCall", "LeaveCall"] for join/leave only.
+> // A join or leave can be reported more than once (different ActivityId).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, all calls, all activity types).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"]
+> let TargetCallIds = dynamic([]);        // Example: ["11111111-2222-3333-4444-555555555555"] (CallId from a previous result)
+> let TargetActivityTypes = dynamic([]);  // Example: ["JoinCall", "LeaveCall"] (empty = every ActivityType, including StartShare / StopShare)
+> //
+> // ----- Part 1: Filter Call Activity -----
+> //
 > CallActivityEvents
 > | where ActivityTimestamp between (StartTime .. EndTime)
-> | where ActivityType in ("JoinCall", "LeaveCall")
-> | where isempty(TargetUser) or ActivityInitiatorUpn =~ TargetUser
-> | where isempty(TargetCallId) or CallId =~ TargetCallId
-> | project ActivityTimestamp, ActivityType, ActivityInitiatorUpn, ActivityInitiatorDisplayName,
->     CallSchedulingType, CallId, ThreadId, CallJoinUrl, ActivityId
-> | top min_of(MaxRows, 1000) by ActivityTimestamp desc
+> | where (array_length(TargetUsers) == 0 or ActivityInitiatorUpn in~ (TargetUsers))
+> | where (array_length(TargetCallIds) == 0 or CallId in~ (TargetCallIds))
+> | where (array_length(TargetActivityTypes) == 0 or ActivityType in~ (TargetActivityTypes))
+> | project ActivityTimestamp, ActivityType, ActivityInitiatorUpn, ActivityInitiatorDisplayName, ActivityInitiatorId,
+>     OriginatorUpn, OriginatorUserDisplayName, CallSchedulingType, CallId, ThreadId, CallJoinUrl, ActivityId
+> | top 1000 by ActivityTimestamp desc
 > ```
 > </details>
 
@@ -202,29 +210,39 @@ Results are observed events, not complete mailbox or file contents.
 > // Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
 > // One row per user per CallId: first JoinCall to last LeaveCall. Rejoins inside one call are included in the span.
 > // If the join or leave falls outside the time window, or is not recorded, Duration is empty and DurationStatus says why.
-> let StartTime = ago(30d);
-> let EndTime = now();
-> let TargetUser = "";    // Exact UPN, case-insensitive; empty = all users.
-> let TargetCallId = "";  // Exact CallId; empty = all calls.
-> let MaxRows = 1000;
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, all calls).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"]
+> let TargetCallIds = dynamic([]);        // Example: ["11111111-2222-3333-4444-555555555555"] (CallId from a previous result)
+> let TargetActivityTypes = dynamic([]);  // Example: ["JoinCall", "LeaveCall"] (duration is calculated from JoinCall and LeaveCall rows)
+> //
+> // ----- Part 1: Filter Call Activity, then calculate duration per user per call -----
+> //
 > CallActivityEvents
 > | where ActivityTimestamp between (StartTime .. EndTime)
-> | where ActivityType in ("JoinCall", "LeaveCall")
-> | where isempty(TargetUser) or ActivityInitiatorUpn =~ TargetUser
-> | where isempty(TargetCallId) or CallId =~ TargetCallId
+> | where (array_length(TargetUsers) == 0 or ActivityInitiatorUpn in~ (TargetUsers))
+> | where (array_length(TargetCallIds) == 0 or CallId in~ (TargetCallIds))
+> | where (array_length(TargetActivityTypes) == 0 or ActivityType in~ (TargetActivityTypes))
 > | summarize FirstJoin=minif(ActivityTimestamp, ActivityType == "JoinCall"),
 >     LastLeave=maxif(ActivityTimestamp, ActivityType == "LeaveCall"),
 >     JoinRows=countif(ActivityType == "JoinCall"), LeaveRows=countif(ActivityType == "LeaveCall"),
->     ThreadId=take_any(ThreadId), CallSchedulingType=take_any(CallSchedulingType)
+>     ThreadId=take_any(ThreadId), CallSchedulingType=take_any(CallSchedulingType),
+>     ActivityInitiatorDisplayName=take_any(ActivityInitiatorDisplayName), ActivityInitiatorId=take_any(ActivityInitiatorId),
+>     OriginatorUpn=take_any(OriginatorUpn), OriginatorUserDisplayName=take_any(OriginatorUserDisplayName)
 >     by CallId, ActivityInitiatorUpn
 > | extend Valid = isnotnull(FirstJoin) and isnotnull(LastLeave) and LastLeave >= FirstJoin
 > | extend Duration = iff(Valid, LastLeave - FirstJoin, timespan(null)),
 >     DurationSeconds = iff(Valid, (LastLeave - FirstJoin) / 1s, real(null)),
 >     DurationStatus = case(JoinRows == 0, "Missing join", LeaveRows == 0, "Missing leave",
 >         LastLeave < FirstJoin, "Invalid: leave precedes join", "First join to last leave")
-> | project CallId, ThreadId, CallSchedulingType, ActivityInitiatorUpn, FirstJoin, LastLeave,
+> | project CallId, ThreadId, CallSchedulingType, ActivityInitiatorUpn, ActivityInitiatorDisplayName, ActivityInitiatorId,
+>     OriginatorUpn, OriginatorUserDisplayName, FirstJoin, LastLeave,
 >     Duration, DurationSeconds, DurationStatus, JoinRows, LeaveRows
-> | top min_of(MaxRows, 1000) by FirstJoin desc
+> | top 1000 by FirstJoin desc
 > ```
 > </details>
 
@@ -236,20 +254,28 @@ Results are observed events, not complete mailbox or file contents.
 > ```kql
 > // Teams Calls and Meeting activities > SharedActivities: was camera or screen shared, mute/unmute etc
 > // Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
-> // Returns StartShare / StopShare events only. Camera on/off and mute/unmute are not recorded in this table.
-> let StartTime = ago(30d);
-> let EndTime = now();
-> let TargetUser = "";    // Exact UPN, case-insensitive; empty = all users.
-> let TargetCallId = "";  // Exact CallId; empty = all calls.
-> let MaxRows = 1000;
+> // Returns every ActivityType by default; set TargetActivityTypes to ["StartShare", "StopShare"] to see screen sharing only.
+> // Camera on/off and mute/unmute have not been observed as ActivityTypes in this tenant's data.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, all calls, all activity types).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"]
+> let TargetCallIds = dynamic([]);        // Example: ["11111111-2222-3333-4444-555555555555"] (CallId from a previous result)
+> let TargetActivityTypes = dynamic([]);  // Example: ["StartShare", "StopShare"] (empty = every ActivityType, so any camera/mute type would show here)
+> //
+> // ----- Part 1: Filter Call Activity -----
+> //
 > CallActivityEvents
 > | where ActivityTimestamp between (StartTime .. EndTime)
-> | where ActivityType in ("StartShare", "StopShare")
-> | where isempty(TargetUser) or ActivityInitiatorUpn =~ TargetUser
-> | where isempty(TargetCallId) or CallId =~ TargetCallId
-> | project ActivityTimestamp, ActivityType, ActivityInitiatorUpn, ActivityInitiatorDisplayName,
->     CallSchedulingType, CallId, ThreadId, CallJoinUrl, ActivityId
-> | top min_of(MaxRows, 1000) by ActivityTimestamp desc
+> | where (array_length(TargetUsers) == 0 or ActivityInitiatorUpn in~ (TargetUsers))
+> | where (array_length(TargetCallIds) == 0 or CallId in~ (TargetCallIds))
+> | where (array_length(TargetActivityTypes) == 0 or ActivityType in~ (TargetActivityTypes))
+> | project ActivityTimestamp, ActivityType, ActivityInitiatorUpn, ActivityInitiatorDisplayName, ActivityInitiatorId,
+>     OriginatorUpn, OriginatorUserDisplayName, CallSchedulingType, CallId, ThreadId, CallJoinUrl, ActivityId
+> | top 1000 by ActivityTimestamp desc
 > ```
 > </details>
 

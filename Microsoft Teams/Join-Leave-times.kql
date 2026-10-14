@@ -1,16 +1,24 @@
 // Teams Calls and Meeting activities > Join/Leave times
 // Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
-// One row per JoinCall / LeaveCall event. A join or leave can be reported more than once (different ActivityId).
-let StartTime = ago(30d);
-let EndTime = now();
-let TargetUser = "";    // Exact UPN, case-insensitive; empty = all users.
-let TargetCallId = "";  // Exact CallId; empty = all calls.
-let MaxRows = 1000;
+// One row per call activity event (JoinCall, LeaveCall and any other ActivityType); set TargetActivityTypes to ["JoinCall", "LeaveCall"] for join/leave only.
+// A join or leave can be reported more than once (different ActivityId).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all users, all calls, all activity types).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"]
+let TargetCallIds = dynamic([]);        // Example: ["11111111-2222-3333-4444-555555555555"] (CallId from a previous result)
+let TargetActivityTypes = dynamic([]);  // Example: ["JoinCall", "LeaveCall"] (empty = every ActivityType, including StartShare / StopShare)
+//
+// ----- Part 1: Filter Call Activity -----
+//
 CallActivityEvents
 | where ActivityTimestamp between (StartTime .. EndTime)
-| where ActivityType in ("JoinCall", "LeaveCall")
-| where isempty(TargetUser) or ActivityInitiatorUpn =~ TargetUser
-| where isempty(TargetCallId) or CallId =~ TargetCallId
-| project ActivityTimestamp, ActivityType, ActivityInitiatorUpn, ActivityInitiatorDisplayName,
-    CallSchedulingType, CallId, ThreadId, CallJoinUrl, ActivityId
-| top min_of(MaxRows, 1000) by ActivityTimestamp desc
+| where (array_length(TargetUsers) == 0 or ActivityInitiatorUpn in~ (TargetUsers))
+| where (array_length(TargetCallIds) == 0 or CallId in~ (TargetCallIds))
+| where (array_length(TargetActivityTypes) == 0 or ActivityType in~ (TargetActivityTypes))
+| project ActivityTimestamp, ActivityType, ActivityInitiatorUpn, ActivityInitiatorDisplayName, ActivityInitiatorId,
+    OriginatorUpn, OriginatorUserDisplayName, CallSchedulingType, CallId, ThreadId, CallJoinUrl, ActivityId
+| top 1000 by ActivityTimestamp desc

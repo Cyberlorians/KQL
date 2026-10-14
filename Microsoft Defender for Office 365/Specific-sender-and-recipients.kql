@@ -1,26 +1,28 @@
 // Specific sender and recipients
+// Objective: Shows who emailed whom: visible (From) and envelope (MailFrom) sender, recipient, subject,
+// direction (Inbound, Outbound or Intra-org), delivery result and attachment/URL counts.
 // Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
-let StartTime = ago(30d);
-let EndTime = now();
-let SenderAddress = "";         // Exact sender; empty = all.
-let RecipientAddress = "";      // Exact recipient; empty = all.
-let SenderField = "Either";     // From, Envelope, or Either (case-sensitive).
-let MaxRows = 1000;
-let CommunicationPairs = materialize(
-	EmailEvents
-	| where TimeGenerated between (StartTime .. EndTime)
-	| where isempty(SenderAddress)
-		or (SenderField in ("From", "Either") and SenderFromAddress =~ SenderAddress)
-		or (SenderField in ("Envelope", "Either") and SenderMailFromAddress =~ SenderAddress)
-	| where isempty(RecipientAddress) or RecipientEmailAddress =~ RecipientAddress
-	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
-		ObservedEventCount=count(), arg_max(TimeGenerated, *)
-		by NetworkMessageId, RecipientEmailAddress
-);
-CommunicationPairs
-| project TimeGenerated, FirstObserved, LastObserved, ObservedEventCount,
-	NetworkMessageId, InternetMessageId, SenderFromAddress,
-	SenderMailFromAddress, SenderFromDomain, RecipientEmailAddress,
-	Subject, EmailDirection, DeliveryAction, DeliveryLocation,
-	AuthenticationDetails, AttachmentCount, UrlCount
-| top MaxRows by TimeGenerated desc
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all senders, all recipients).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetSenders = dynamic([]);        // Example: ["sender@contoso.com", "sender2@fabrikam.com"] (matches visible sender or envelope sender)
+let TargetRecipients = dynamic([]);     // Example: ["user@contoso.com", "user2@contoso.com"]
+//
+// ----- Part 1: Filter sender and recipient -----
+//
+EmailEvents
+| where TimeGenerated between (StartTime .. EndTime)
+| where (array_length(TargetSenders) == 0 or SenderFromAddress in~ (TargetSenders)
+	or SenderMailFromAddress in~ (TargetSenders))
+| where (array_length(TargetRecipients) == 0 or RecipientEmailAddress in~ (TargetRecipients))
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, EmailDirection, SenderFromAddress, SenderMailFromAddress,
+	RecipientEmailAddress, Subject, SenderFromDomain,
+	DeliveryAction, DeliveryLocation, AuthenticationDetails,
+	AttachmentCount, UrlCount, NetworkMessageId, InternetMessageId
+| top 1000 by TimeGenerated desc

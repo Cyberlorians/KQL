@@ -1,26 +1,30 @@
 // External communications
+// Objective: Lists email sent to or received from outside the organization (Inbound and Outbound) with the sender,
+// recipient, subject, delivery and threat details. Internal-only mail is excluded by design.
 // Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
-let StartTime = ago(30d);
-let EndTime = now();
-let TargetUser = "";          // Exact visible sender, envelope sender, or recipient.
-let Direction = "";           // Inbound or Outbound; empty = both.
-let MaxRows = 1000;
-let ExternalMessages = materialize(
-	EmailEvents
-	| where TimeGenerated between (StartTime .. EndTime)
-	| where EmailDirection in~ ("Inbound", "Outbound")
-	| where isempty(Direction) or EmailDirection =~ Direction
-	| where isempty(TargetUser) or SenderFromAddress =~ TargetUser
-		or SenderMailFromAddress =~ TargetUser or RecipientEmailAddress =~ TargetUser
-	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
-		ObservedEventCount=count(), arg_max(TimeGenerated, *)
-		by NetworkMessageId, RecipientEmailAddress
-);
-ExternalMessages
-| project TimeGenerated, FirstObserved, LastObserved, ObservedEventCount,
-	NetworkMessageId, InternetMessageId, EmailDirection,
-	SenderFromAddress, SenderMailFromAddress, SenderFromDomain,
-	SenderIPv4, SenderIPv6, RecipientEmailAddress, Subject,
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all users, both directions).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"] (matches visible sender, envelope sender, or recipient)
+let TargetDirections = dynamic([]);     // Example: ["Outbound"] (Inbound or Outbound; empty = both)
+//
+// ----- Part 1: Filter external email -----
+//
+EmailEvents
+| where TimeGenerated between (StartTime .. EndTime)
+| where EmailDirection in~ ("Inbound", "Outbound")
+| where (array_length(TargetDirections) == 0 or EmailDirection in~ (TargetDirections))
+| where (array_length(TargetUsers) == 0 or SenderFromAddress in~ (TargetUsers)
+	or SenderMailFromAddress in~ (TargetUsers) or RecipientEmailAddress in~ (TargetUsers))
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, EmailDirection, SenderFromAddress, SenderMailFromAddress,
+	RecipientEmailAddress, Subject, SenderFromDomain, SenderIPv4, SenderIPv6,
 	DeliveryAction, DeliveryLocation, AuthenticationDetails,
-	ThreatTypes, ThreatNames, AttachmentCount, UrlCount
-| top MaxRows by TimeGenerated desc
+	ThreatTypes, ThreatNames, AttachmentCount, UrlCount,
+	NetworkMessageId, InternetMessageId
+| top 1000 by TimeGenerated desc

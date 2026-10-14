@@ -1,26 +1,28 @@
 // Specific Subject lines
+// Objective: Finds email by subject line, showing the subject, sender, recipient, direction,
+// delivery result, threat details and attachment/URL counts.
 // Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
-let StartTime = ago(30d);
-let EndTime = now();
-let SubjectText = "";
-let ExactSubject = false;       // true = exact; false = substring.
-let TargetRecipient = "";       // Exact recipient; empty = all.
-let MaxRows = 1000;
-let SubjectMessages = materialize(
-	EmailEvents
-	| where TimeGenerated between (StartTime .. EndTime)
-	| where isempty(SubjectText)
-		or (ExactSubject and Subject =~ SubjectText)
-		or (not(ExactSubject) and Subject contains SubjectText)
-	| where isempty(TargetRecipient) or RecipientEmailAddress =~ TargetRecipient
-	| summarize FirstObserved=min(TimeGenerated), LastObserved=max(TimeGenerated),
-		ObservedEventCount=count(), arg_max(TimeGenerated, *)
-		by NetworkMessageId, RecipientEmailAddress
-);
-SubjectMessages
-| project TimeGenerated, FirstObserved, LastObserved, ObservedEventCount,
-	NetworkMessageId, InternetMessageId, Subject,
-	SenderFromAddress, SenderMailFromAddress, RecipientEmailAddress,
-	EmailDirection, DeliveryAction, DeliveryLocation,
-	ThreatTypes, ThreatNames, AttachmentCount, UrlCount
-| top MaxRows by TimeGenerated desc
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (every subject, all users).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetSubjects = dynamic([]);       // Example: ["Invoice", "Password reset"] (case-insensitive whole-word/phrase match, not partial words)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"] (matches visible sender, envelope sender, or recipient)
+//
+// ----- Part 1: Filter by subject and user -----
+//
+EmailEvents
+| where TimeGenerated between (StartTime .. EndTime)
+| where (array_length(TargetSubjects) == 0 or Subject has_any (TargetSubjects))
+| where (array_length(TargetUsers) == 0 or SenderFromAddress in~ (TargetUsers)
+	or SenderMailFromAddress in~ (TargetUsers) or RecipientEmailAddress in~ (TargetUsers))
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, SenderFromAddress, SenderMailFromAddress, RecipientEmailAddress,
+	Subject, EmailDirection, DeliveryAction, DeliveryLocation,
+	ThreatTypes, ThreatNames, AttachmentCount, UrlCount,
+	NetworkMessageId, InternetMessageId
+| top 1000 by TimeGenerated desc

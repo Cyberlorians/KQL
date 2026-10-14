@@ -2,26 +2,36 @@
 // Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
 // One row per user per CallId: first JoinCall to last LeaveCall. Rejoins inside one call are included in the span.
 // If the join or leave falls outside the time window, or is not recorded, Duration is empty and DurationStatus says why.
-let StartTime = ago(30d);
-let EndTime = now();
-let TargetUser = "";    // Exact UPN, case-insensitive; empty = all users.
-let TargetCallId = "";  // Exact CallId; empty = all calls.
-let MaxRows = 1000;
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all users, all calls).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"]
+let TargetCallIds = dynamic([]);        // Example: ["11111111-2222-3333-4444-555555555555"] (CallId from a previous result)
+let TargetActivityTypes = dynamic([]);  // Example: ["JoinCall", "LeaveCall"] (duration is calculated from JoinCall and LeaveCall rows)
+//
+// ----- Part 1: Filter Call Activity, then calculate duration per user per call -----
+//
 CallActivityEvents
 | where ActivityTimestamp between (StartTime .. EndTime)
-| where ActivityType in ("JoinCall", "LeaveCall")
-| where isempty(TargetUser) or ActivityInitiatorUpn =~ TargetUser
-| where isempty(TargetCallId) or CallId =~ TargetCallId
+| where (array_length(TargetUsers) == 0 or ActivityInitiatorUpn in~ (TargetUsers))
+| where (array_length(TargetCallIds) == 0 or CallId in~ (TargetCallIds))
+| where (array_length(TargetActivityTypes) == 0 or ActivityType in~ (TargetActivityTypes))
 | summarize FirstJoin=minif(ActivityTimestamp, ActivityType == "JoinCall"),
     LastLeave=maxif(ActivityTimestamp, ActivityType == "LeaveCall"),
     JoinRows=countif(ActivityType == "JoinCall"), LeaveRows=countif(ActivityType == "LeaveCall"),
-    ThreadId=take_any(ThreadId), CallSchedulingType=take_any(CallSchedulingType)
+    ThreadId=take_any(ThreadId), CallSchedulingType=take_any(CallSchedulingType),
+    ActivityInitiatorDisplayName=take_any(ActivityInitiatorDisplayName), ActivityInitiatorId=take_any(ActivityInitiatorId),
+    OriginatorUpn=take_any(OriginatorUpn), OriginatorUserDisplayName=take_any(OriginatorUserDisplayName)
     by CallId, ActivityInitiatorUpn
 | extend Valid = isnotnull(FirstJoin) and isnotnull(LastLeave) and LastLeave >= FirstJoin
 | extend Duration = iff(Valid, LastLeave - FirstJoin, timespan(null)),
     DurationSeconds = iff(Valid, (LastLeave - FirstJoin) / 1s, real(null)),
     DurationStatus = case(JoinRows == 0, "Missing join", LeaveRows == 0, "Missing leave",
         LastLeave < FirstJoin, "Invalid: leave precedes join", "First join to last leave")
-| project CallId, ThreadId, CallSchedulingType, ActivityInitiatorUpn, FirstJoin, LastLeave,
+| project CallId, ThreadId, CallSchedulingType, ActivityInitiatorUpn, ActivityInitiatorDisplayName, ActivityInitiatorId,
+    OriginatorUpn, OriginatorUserDisplayName, FirstJoin, LastLeave,
     Duration, DurationSeconds, DurationStatus, JoinRows, LeaveRows
-| top min_of(MaxRows, 1000) by FirstJoin desc
+| top 1000 by FirstJoin desc

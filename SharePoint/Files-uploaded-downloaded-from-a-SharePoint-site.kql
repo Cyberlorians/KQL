@@ -1,5 +1,5 @@
 // SharePoint Activity > Files uploaded/downloaded from a SharePoint site
-// DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
+// Sentinel OfficeActivity only.
 // Only FileUploaded/FileDownloaded: sync-full/partial operations are deliberately NOT included.
 // Operation is audit evidence, not proof of completion, file bytes, or file content.
 let StartTime = ago(30d);
@@ -8,9 +8,6 @@ let TargetUser = "";          // Exact UserId OR case-insensitive substring in r
 let TargetOperation = "";     // Exact FileUploaded or FileDownloaded.
 let TargetSite = "";          // Case-insensitive substring in Site_Url or OfficeObjectId.
 let TargetFileName = "";      // Exact SourceFileName or DestinationFileName.
-let TargetObjectId = "";      // Exact OfficeObjectId or ListItemUniqueId.
-let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
-let MaxRows = 1000;
 OfficeActivity
 | where TimeGenerated between (StartTime .. EndTime)
 | where OfficeWorkload =~ "SharePoint"
@@ -22,8 +19,6 @@ OfficeActivity
 | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
 | where isempty(TargetSite) or Site_Url contains TargetSite or OfficeObjectId contains TargetSite
 | where isempty(TargetFileName) or SourceFileName =~ TargetFileName or DestinationFileName =~ TargetFileName
-| where isempty(TargetObjectId) or OfficeObjectId =~ TargetObjectId or tostring(ListItemUniqueId) =~ TargetObjectId
-| where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
 | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
 | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
     OfficeWorkload, Operation, UserId, Actor, OfficeObjectId, Site_Url, SourceFileName,
@@ -40,4 +35,4 @@ OfficeActivity
     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, SourceRecordId, OfficeId,
     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId, EvidenceRecordKey
-| top min_of(MaxRows, 1000) by TimeGenerated desc
+| top 1000 by TimeGenerated desc

@@ -1,39 +1,16 @@
 // Teams Calls and Meeting activities > Join/Leave times
-// DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
-// Evidence rows, not reconstructed sessions. Only the three explicit meeting/call operations qualify.
+// Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
+// One row per JoinCall / LeaveCall event. A join or leave can be reported more than once (different ActivityId).
 let StartTime = ago(30d);
 let EndTime = now();
-let TargetUser = "";          // Exact UserId OR case-insensitive substring in raw Actor/Attendees/Members.
-let TargetOperation = "";     // Exact operation; empty = all allowed operations.
-let TargetMeetingId = "";     // Exact MeetingDetailId.
-let TargetChatThreadId = "";  // Exact ChatThreadId.
-let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
+let TargetUser = "";    // Exact UPN, case-insensitive; empty = all users.
+let TargetCallId = "";  // Exact CallId; empty = all calls.
 let MaxRows = 1000;
-OfficeActivity
-| where TimeGenerated between (StartTime .. EndTime)
-| where OfficeWorkload =~ "MicrosoftTeams"
-| where Operation in~ ("MeetingDetail", "MeetingParticipantDetail", "CallParticipantDetail")
-| where isempty(TargetOperation) or Operation =~ TargetOperation
-| where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
-    or tostring(Attendees) contains TargetUser or tostring(Members) contains TargetUser
-| where isempty(TargetMeetingId) or MeetingDetailId =~ TargetMeetingId
-| where isempty(TargetChatThreadId) or ChatThreadId =~ TargetChatThreadId
-| where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
-| extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
-// Include participant and raw evidence in the key: a shared record ID must not merge different participants/times.
-| extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
-    OfficeWorkload, Operation, UserId, Actor, JoinTime, LeaveTime, Attendees, Members,
-    ArtifactsShared, MeetingDetailId, ChatThreadId, ExtraProperties, OperationProperties,
-    Event_Data, OfficeObjectId, Site_Url, SourceFileName, DestinationFileName,
-    SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, ClientIP, ActorIpAddress, ResultStatus)))
-| extend RecordIdentity = case(isnotempty(tostring(SourceRecordId)), strcat("SourceRecordId:", tostring(SourceRecordId)),
-    isnotempty(tostring(OfficeId)), strcat("OfficeId:", tostring(OfficeId)),
-    strcat("Fallback:", hash_sha256(tostring(pack_array(TimeGenerated, EvidenceFingerprint)))))
-| extend EvidenceRecordKey = hash_sha256(tostring(pack_array(OrganizationId, RecordIdentity, EvidenceFingerprint)))
-| summarize arg_max(TimeGenerated, *) by EvidenceRecordKey
-| project TimeGenerated, OrganizationId, OfficeWorkload, Operation, UserId, Actor,
-    JoinTime, LeaveTime, MeetingDetailId, ChatThreadId, Attendees, Members, ArtifactsShared,
-    ExtraProperties, OperationProperties, Event_Data, SourceRecordId, OfficeId, OfficeObjectId,
-    Site_Url, SourceFileName, DestinationFileName, SourceRelativeUrl, DestinationRelativeUrl,
-    ListItemUniqueId, ClientIP, ActorIpAddress, ResultStatus, EvidenceRecordKey
-| top min_of(MaxRows, 1000) by TimeGenerated desc
+CallActivityEvents
+| where ActivityTimestamp between (StartTime .. EndTime)
+| where ActivityType in ("JoinCall", "LeaveCall")
+| where isempty(TargetUser) or ActivityInitiatorUpn =~ TargetUser
+| where isempty(TargetCallId) or CallId =~ TargetCallId
+| project ActivityTimestamp, ActivityType, ActivityInitiatorUpn, ActivityInitiatorDisplayName,
+    CallSchedulingType, CallId, ThreadId, CallJoinUrl, ActivityId
+| top min_of(MaxRows, 1000) by ActivityTimestamp desc

@@ -1,5 +1,5 @@
 // OneDrive > Sync activity
-// DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
+// Sentinel OfficeActivity only. Tested live with the signed-in OneDrive.exe client (FileSyncUploadedFull); download and partial operations were not observed in the tenant.
 // Only explicit full/partial sync upload/download operations; generic FileUploaded is NOT sync evidence.
 // Partial operations are deprecated legacy Groove.exe evidence, retained for historical investigations.
 // A reproducible sync test requires the signed-in OneDrive.exe client, not a Graph upload.
@@ -10,9 +10,6 @@ let TargetUser = "";          // Exact UserId OR case-insensitive substring in r
 let TargetOperation = "";     // Exact full/partial sync operation from the allowlist below.
 let TargetSite = "";          // Case-insensitive substring in Site_Url or OfficeObjectId.
 let TargetFileName = "";      // Exact SourceFileName or DestinationFileName.
-let TargetObjectId = "";      // Exact OfficeObjectId or ListItemUniqueId.
-let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
-let MaxRows = 1000;
 OfficeActivity
 | where TimeGenerated between (StartTime .. EndTime)
 | extend IsPersonalLocation = Site_Url contains "-my.sharepoint.com" or OfficeObjectId contains "-my.sharepoint.com"
@@ -23,8 +20,6 @@ OfficeActivity
 | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
 | where isempty(TargetSite) or Site_Url contains TargetSite or OfficeObjectId contains TargetSite
 | where isempty(TargetFileName) or SourceFileName =~ TargetFileName or DestinationFileName =~ TargetFileName
-| where isempty(TargetObjectId) or OfficeObjectId =~ TargetObjectId or tostring(ListItemUniqueId) =~ TargetObjectId
-| where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
 | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
 | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
     OfficeWorkload, Operation, UserId, Actor, OfficeObjectId, Site_Url, SourceFileName,
@@ -41,4 +36,4 @@ OfficeActivity
     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, SourceRecordId, OfficeId,
     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId, EvidenceRecordKey
-| top min_of(MaxRows, 1000) by TimeGenerated desc
+| top 1000 by TimeGenerated desc

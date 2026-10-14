@@ -2,7 +2,7 @@
 
 Expand a customer request to copy its full KQL. Set the parameters before running; default window: last 30 days. Each query is also saved as a `.kql` file under its product folder.
 
-Email queries use `TimeGenerated`; without Sentinel, replace every `TimeGenerated` with `Timestamp` in Defender XDR Advanced Hunting. Teams, SharePoint, and OneDrive queries read the Sentinel `OfficeActivity` table (Microsoft 365 connector with Teams and SharePoint enabled) and are execution-tested; positive coverage validation is pending. See [Collaboration connectors and validation](Collaboration-Connectors.md).
+Email queries use `TimeGenerated`; without Sentinel, replace every `TimeGenerated` with `Timestamp` in Defender XDR Advanced Hunting. SharePoint and OneDrive queries read the Sentinel `OfficeActivity` table (Microsoft 365 connector with SharePoint enabled). Teams call and meeting queries read the Defender XDR `CallActivityEvents` table and run in Defender XDR Advanced Hunting only. A green check mark means the query was tested against live tenant data. See [Collaboration connectors and validation](Collaboration-Connectors.md).
 
 Results are observed events, not complete mailbox or file contents.
 
@@ -165,157 +165,91 @@ Results are observed events, not complete mailbox or file contents.
 <details>
 <summary><strong>Teams Calls and Meeting activities</strong></summary>
 
+> Defender XDR Advanced Hunting only. The `CallActivityEvents` table is not available in Microsoft Sentinel.
+
 > <details>
-> <summary><strong>Join/Leave times</strong></summary>
+> <summary>✅ <strong>Join/Leave times</strong></summary>
 >
 > Query file: [Microsoft Teams/Join-Leave-times.kql](../Microsoft%20Teams/Join-Leave-times.kql).
 >
 > ```kql
 > // Teams Calls and Meeting activities > Join/Leave times
-> // DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
-> // Evidence rows, not reconstructed sessions. Only the three explicit meeting/call operations qualify.
+> // Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
+> // One row per JoinCall / LeaveCall event. A join or leave can be reported more than once (different ActivityId).
 > let StartTime = ago(30d);
 > let EndTime = now();
-> let TargetUser = "";          // Exact UserId OR case-insensitive substring in raw Actor/Attendees/Members.
-> let TargetOperation = "";     // Exact operation; empty = all allowed operations.
-> let TargetMeetingId = "";     // Exact MeetingDetailId.
-> let TargetChatThreadId = "";  // Exact ChatThreadId.
-> let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
+> let TargetUser = "";    // Exact UPN, case-insensitive; empty = all users.
+> let TargetCallId = "";  // Exact CallId; empty = all calls.
 > let MaxRows = 1000;
-> OfficeActivity
-> | where TimeGenerated between (StartTime .. EndTime)
-> | where OfficeWorkload =~ "MicrosoftTeams"
-> | where Operation in~ ("MeetingDetail", "MeetingParticipantDetail", "CallParticipantDetail")
-> | where isempty(TargetOperation) or Operation =~ TargetOperation
-> | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
->     or tostring(Attendees) contains TargetUser or tostring(Members) contains TargetUser
-> | where isempty(TargetMeetingId) or MeetingDetailId =~ TargetMeetingId
-> | where isempty(TargetChatThreadId) or ChatThreadId =~ TargetChatThreadId
-> | where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
-> | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
-> // Include participant and raw evidence in the key: a shared record ID must not merge different participants/times.
-> | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
->     OfficeWorkload, Operation, UserId, Actor, JoinTime, LeaveTime, Attendees, Members,
->     ArtifactsShared, MeetingDetailId, ChatThreadId, ExtraProperties, OperationProperties,
->     Event_Data, OfficeObjectId, Site_Url, SourceFileName, DestinationFileName,
->     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, ClientIP, ActorIpAddress, ResultStatus)))
-> | extend RecordIdentity = case(isnotempty(tostring(SourceRecordId)), strcat("SourceRecordId:", tostring(SourceRecordId)),
->     isnotempty(tostring(OfficeId)), strcat("OfficeId:", tostring(OfficeId)),
->     strcat("Fallback:", hash_sha256(tostring(pack_array(TimeGenerated, EvidenceFingerprint)))))
-> | extend EvidenceRecordKey = hash_sha256(tostring(pack_array(OrganizationId, RecordIdentity, EvidenceFingerprint)))
-> | summarize arg_max(TimeGenerated, *) by EvidenceRecordKey
-> | project TimeGenerated, OrganizationId, OfficeWorkload, Operation, UserId, Actor,
->     JoinTime, LeaveTime, MeetingDetailId, ChatThreadId, Attendees, Members, ArtifactsShared,
->     ExtraProperties, OperationProperties, Event_Data, SourceRecordId, OfficeId, OfficeObjectId,
->     Site_Url, SourceFileName, DestinationFileName, SourceRelativeUrl, DestinationRelativeUrl,
->     ListItemUniqueId, ClientIP, ActorIpAddress, ResultStatus, EvidenceRecordKey
-> | top min_of(MaxRows, 1000) by TimeGenerated desc
+> CallActivityEvents
+> | where ActivityTimestamp between (StartTime .. EndTime)
+> | where ActivityType in ("JoinCall", "LeaveCall")
+> | where isempty(TargetUser) or ActivityInitiatorUpn =~ TargetUser
+> | where isempty(TargetCallId) or CallId =~ TargetCallId
+> | project ActivityTimestamp, ActivityType, ActivityInitiatorUpn, ActivityInitiatorDisplayName,
+>     CallSchedulingType, CallId, ThreadId, CallJoinUrl, ActivityId
+> | top min_of(MaxRows, 1000) by ActivityTimestamp desc
 > ```
 > </details>
 
 > <details>
-> <summary><strong>Meeting Duration</strong></summary>
+> <summary>✅ <strong>Meeting Duration</strong></summary>
 >
 > Query file: [Microsoft Teams/Meeting-Duration.kql](../Microsoft%20Teams/Meeting-Duration.kql).
 >
 > ```kql
 > // Teams Calls and Meeting activities > Meeting Duration
-> // DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
-> // Duration is the interval on this evidence row, NOT a reconstructed overall meeting duration.
-> // No min/max timestamp reconstruction, zero substitution, or summation across participants.
+> // Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
+> // One row per user per CallId: first JoinCall to last LeaveCall. Rejoins inside one call are included in the span.
+> // If the join or leave falls outside the time window, or is not recorded, Duration is empty and DurationStatus says why.
 > let StartTime = ago(30d);
 > let EndTime = now();
-> let TargetUser = "";          // Exact UserId OR case-insensitive substring in raw Actor/Attendees/Members.
-> let TargetOperation = "";     // Exact operation; empty = all allowed operations.
-> let TargetMeetingId = "";     // Exact MeetingDetailId.
-> let TargetChatThreadId = "";  // Exact ChatThreadId.
-> let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
+> let TargetUser = "";    // Exact UPN, case-insensitive; empty = all users.
+> let TargetCallId = "";  // Exact CallId; empty = all calls.
 > let MaxRows = 1000;
-> OfficeActivity
-> | where TimeGenerated between (StartTime .. EndTime)
-> | where OfficeWorkload =~ "MicrosoftTeams"
-> | where Operation in~ ("MeetingDetail", "MeetingParticipantDetail", "CallParticipantDetail")
-> | where isempty(TargetOperation) or Operation =~ TargetOperation
-> | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
->     or tostring(Attendees) contains TargetUser or tostring(Members) contains TargetUser
-> | where isempty(TargetMeetingId) or MeetingDetailId =~ TargetMeetingId
-> | where isempty(TargetChatThreadId) or ChatThreadId =~ TargetChatThreadId
-> | where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
-> | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
-> | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
->     OfficeWorkload, Operation, UserId, Actor, JoinTime, LeaveTime, Attendees, Members,
->     ArtifactsShared, MeetingDetailId, ChatThreadId, ExtraProperties, OperationProperties,
->     Event_Data, OfficeObjectId, Site_Url, SourceFileName, DestinationFileName,
->     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, ClientIP, ActorIpAddress, ResultStatus)))
-> | extend RecordIdentity = case(isnotempty(tostring(SourceRecordId)), strcat("SourceRecordId:", tostring(SourceRecordId)),
->     isnotempty(tostring(OfficeId)), strcat("OfficeId:", tostring(OfficeId)),
->     strcat("Fallback:", hash_sha256(tostring(pack_array(TimeGenerated, EvidenceFingerprint)))))
-> // Participant discriminator prevents a reused record ID from collapsing distinct join/leave evidence.
-> | extend EvidenceRecordKey = hash_sha256(tostring(pack_array(OrganizationId, RecordIdentity, EvidenceFingerprint)))
-> | summarize arg_max(TimeGenerated, *) by EvidenceRecordKey
-> | extend HasValidInterval = isnotnull(JoinTime) and isnotnull(LeaveTime) and LeaveTime >= JoinTime
-> | extend Duration = iff(HasValidInterval, LeaveTime - JoinTime, timespan(null)),
->     DurationSeconds = iff(HasValidInterval, (LeaveTime - JoinTime) / 1s, real(null)),
->     DurationStatus = case(isnull(JoinTime) or isnull(LeaveTime), "Missing join or leave time",
->         LeaveTime < JoinTime, "Invalid: leave precedes join", "Valid recorded interval")
-> | project TimeGenerated, OrganizationId, OfficeWorkload, Operation, UserId, Actor,
->     JoinTime, LeaveTime, Duration, DurationSeconds, DurationStatus, HasValidInterval,
->     MeetingDetailId, ChatThreadId, Attendees, Members, ArtifactsShared,
->     ExtraProperties, OperationProperties, Event_Data, SourceRecordId, OfficeId, OfficeObjectId,
->     Site_Url, SourceFileName, DestinationFileName, SourceRelativeUrl, DestinationRelativeUrl,
->     ListItemUniqueId, ClientIP, ActorIpAddress, ResultStatus, EvidenceRecordKey
-> | top min_of(MaxRows, 1000) by TimeGenerated desc
+> CallActivityEvents
+> | where ActivityTimestamp between (StartTime .. EndTime)
+> | where ActivityType in ("JoinCall", "LeaveCall")
+> | where isempty(TargetUser) or ActivityInitiatorUpn =~ TargetUser
+> | where isempty(TargetCallId) or CallId =~ TargetCallId
+> | summarize FirstJoin=minif(ActivityTimestamp, ActivityType == "JoinCall"),
+>     LastLeave=maxif(ActivityTimestamp, ActivityType == "LeaveCall"),
+>     JoinRows=countif(ActivityType == "JoinCall"), LeaveRows=countif(ActivityType == "LeaveCall"),
+>     ThreadId=take_any(ThreadId), CallSchedulingType=take_any(CallSchedulingType)
+>     by CallId, ActivityInitiatorUpn
+> | extend Valid = isnotnull(FirstJoin) and isnotnull(LastLeave) and LastLeave >= FirstJoin
+> | extend Duration = iff(Valid, LastLeave - FirstJoin, timespan(null)),
+>     DurationSeconds = iff(Valid, (LastLeave - FirstJoin) / 1s, real(null)),
+>     DurationStatus = case(JoinRows == 0, "Missing join", LeaveRows == 0, "Missing leave",
+>         LastLeave < FirstJoin, "Invalid: leave precedes join", "First join to last leave")
+> | project CallId, ThreadId, CallSchedulingType, ActivityInitiatorUpn, FirstJoin, LastLeave,
+>     Duration, DurationSeconds, DurationStatus, JoinRows, LeaveRows
+> | top min_of(MaxRows, 1000) by FirstJoin desc
 > ```
 > </details>
 
 > <details>
-> <summary><strong>SharedActivities: was camera or screen shared, mute/unmute etc</strong></summary>
+> <summary>✅ <strong>SharedActivities: was camera or screen shared, mute/unmute etc</strong></summary>
 >
 > Query file: [Microsoft Teams/SharedActivities.kql](../Microsoft%20Teams/SharedActivities.kql).
 >
 > ```kql
 > // Teams Calls and Meeting activities > SharedActivities: was camera or screen shared, mute/unmute etc
-> // DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
-> // Preserve ArtifactsShared and other raw payloads; do not infer camera on/off, mute/unmute,
-> // or screen-sharing state/duration from their presence, absence, or an unverified artifact value.
-> // These telemetry claims are unsupported here. Empty artifacts do NOT mean nothing was shared.
+> // Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
+> // Returns StartShare / StopShare events only. Camera on/off and mute/unmute are not recorded in this table.
 > let StartTime = ago(30d);
 > let EndTime = now();
-> let TargetUser = "";          // Exact UserId OR case-insensitive substring in raw Actor/Attendees/Members.
-> let TargetOperation = "";     // Exact operation; empty = all allowed operations.
-> let TargetMeetingId = "";     // Exact MeetingDetailId.
-> let TargetChatThreadId = "";  // Exact ChatThreadId.
-> let TargetArtifact = "";      // Case-insensitive substring in raw ArtifactsShared; not a semantic state filter.
-> let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
+> let TargetUser = "";    // Exact UPN, case-insensitive; empty = all users.
+> let TargetCallId = "";  // Exact CallId; empty = all calls.
 > let MaxRows = 1000;
-> OfficeActivity
-> | where TimeGenerated between (StartTime .. EndTime)
-> | where OfficeWorkload =~ "MicrosoftTeams"
-> | where Operation in~ ("MeetingDetail", "MeetingParticipantDetail", "CallParticipantDetail")
-> | where isempty(TargetOperation) or Operation =~ TargetOperation
-> | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
->     or tostring(Attendees) contains TargetUser or tostring(Members) contains TargetUser
-> | where isempty(TargetMeetingId) or MeetingDetailId =~ TargetMeetingId
-> | where isempty(TargetChatThreadId) or ChatThreadId =~ TargetChatThreadId
-> | where isempty(TargetArtifact) or tostring(ArtifactsShared) contains TargetArtifact
-> | where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
-> | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
-> | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
->     OfficeWorkload, Operation, UserId, Actor, JoinTime, LeaveTime, Attendees, Members,
->     ArtifactsShared, MeetingDetailId, ChatThreadId, ExtraProperties, OperationProperties,
->     Event_Data, OfficeObjectId, Site_Url, SourceFileName, DestinationFileName,
->     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, ClientIP, ActorIpAddress, ResultStatus)))
-> | extend RecordIdentity = case(isnotempty(tostring(SourceRecordId)), strcat("SourceRecordId:", tostring(SourceRecordId)),
->     isnotempty(tostring(OfficeId)), strcat("OfficeId:", tostring(OfficeId)),
->     strcat("Fallback:", hash_sha256(tostring(pack_array(TimeGenerated, EvidenceFingerprint)))))
-> | extend EvidenceRecordKey = hash_sha256(tostring(pack_array(OrganizationId, RecordIdentity, EvidenceFingerprint)))
-> | summarize arg_max(TimeGenerated, *) by EvidenceRecordKey
-> | project TimeGenerated, OrganizationId, OfficeWorkload, Operation, UserId, Actor,
->     JoinTime, LeaveTime, MeetingDetailId, ChatThreadId, ArtifactsShared, Attendees, Members,
->     ExtraProperties, OperationProperties, Event_Data, SourceRecordId, OfficeId, OfficeObjectId,
->     Site_Url, SourceFileName, DestinationFileName, SourceRelativeUrl, DestinationRelativeUrl,
->     ListItemUniqueId, ClientIP, ActorIpAddress, ResultStatus, EvidenceRecordKey
-> | top min_of(MaxRows, 1000) by TimeGenerated desc
+> CallActivityEvents
+> | where ActivityTimestamp between (StartTime .. EndTime)
+> | where ActivityType in ("StartShare", "StopShare")
+> | where isempty(TargetUser) or ActivityInitiatorUpn =~ TargetUser
+> | where isempty(TargetCallId) or CallId =~ TargetCallId
+> | project ActivityTimestamp, ActivityType, ActivityInitiatorUpn, ActivityInitiatorDisplayName,
+>     CallSchedulingType, CallId, ThreadId, CallJoinUrl, ActivityId
+> | top min_of(MaxRows, 1000) by ActivityTimestamp desc
 > ```
 > </details>
 
@@ -325,13 +259,13 @@ Results are observed events, not complete mailbox or file contents.
 <summary><strong>SharePoint Activity</strong></summary>
 
 > <details>
-> <summary><strong>Site/Page accessed/created/modified</strong></summary>
+> <summary>✅ <strong>Site/Page accessed/created/modified</strong></summary>
 >
 > Query file: [SharePoint/Site-Page-accessed-created-modified.kql](../SharePoint/Site-Page-accessed-created-modified.kql).
 >
 > ```kql
 > // SharePoint Activity > Site/Page accessed/created/modified
-> // DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
+> // Sentinel OfficeActivity only.
 > // Page creation/modification/access via FILE operations is restricted to .aspx paths.
 > // Explicit page/site operations remain separately labeled; no document modification is called a page edit.
 > // This is an explicit operation allowlist, not a claim of exhaustive site/page auditing.
@@ -339,12 +273,8 @@ Results are observed events, not complete mailbox or file contents.
 > let StartTime = ago(30d);
 > let EndTime = now();
 > let TargetUser = "";          // Exact UserId OR case-insensitive substring in raw Actor.
-> let TargetOperation = "";     // Exact operation.
 > let TargetSite = "";          // Case-insensitive substring in Site_Url or OfficeObjectId.
-> let TargetFileName = "";      // Exact SourceFileName or DestinationFileName (site-only events may have neither).
-> let TargetObjectId = "";      // Exact OfficeObjectId or ListItemUniqueId.
-> let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
-> let MaxRows = 1000;
+> let TargetFileName = "";      // Exact page/file name (SourceFileName or DestinationFileName); site-only events may have neither.
 > OfficeActivity
 > | where TimeGenerated between (StartTime .. EndTime)
 > | where OfficeWorkload =~ "SharePoint"
@@ -366,12 +296,9 @@ Results are observed events, not complete mailbox or file contents.
 >     IsAspxPath and Operation in~ ("FileModified", "FileModifiedExtended", "FileRenamed", "FileMoved"), "Page modified (file audit)",
 >     "")
 > | where isnotempty(ActivityKind)
-> | where isempty(TargetOperation) or Operation =~ TargetOperation
 > | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
 > | where isempty(TargetSite) or Site_Url contains TargetSite or OfficeObjectId contains TargetSite
 > | where isempty(TargetFileName) or SourceFileName =~ TargetFileName or DestinationFileName =~ TargetFileName
-> | where isempty(TargetObjectId) or OfficeObjectId =~ TargetObjectId or tostring(ListItemUniqueId) =~ TargetObjectId
-> | where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
 > | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
 > | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
 >     OfficeWorkload, Operation, UserId, Actor, OfficeObjectId, Site_Url, SourceFileName,
@@ -388,18 +315,18 @@ Results are observed events, not complete mailbox or file contents.
 >     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, SourceRecordId, OfficeId,
 >     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
 >     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId, EvidenceRecordKey
-> | top min_of(MaxRows, 1000) by TimeGenerated desc
+> | top 1000 by TimeGenerated desc
 > ```
 > </details>
 
 > <details>
-> <summary><strong>Files uploaded/downloaded from a SharePoint site</strong></summary>
+> <summary>✅ <strong>Files uploaded/downloaded from a SharePoint site</strong></summary>
 >
 > Query file: [SharePoint/Files-uploaded-downloaded-from-a-SharePoint-site.kql](../SharePoint/Files-uploaded-downloaded-from-a-SharePoint-site.kql).
 >
 > ```kql
 > // SharePoint Activity > Files uploaded/downloaded from a SharePoint site
-> // DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
+> // Sentinel OfficeActivity only.
 > // Only FileUploaded/FileDownloaded: sync-full/partial operations are deliberately NOT included.
 > // Operation is audit evidence, not proof of completion, file bytes, or file content.
 > let StartTime = ago(30d);
@@ -408,9 +335,6 @@ Results are observed events, not complete mailbox or file contents.
 > let TargetOperation = "";     // Exact FileUploaded or FileDownloaded.
 > let TargetSite = "";          // Case-insensitive substring in Site_Url or OfficeObjectId.
 > let TargetFileName = "";      // Exact SourceFileName or DestinationFileName.
-> let TargetObjectId = "";      // Exact OfficeObjectId or ListItemUniqueId.
-> let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
-> let MaxRows = 1000;
 > OfficeActivity
 > | where TimeGenerated between (StartTime .. EndTime)
 > | where OfficeWorkload =~ "SharePoint"
@@ -422,8 +346,6 @@ Results are observed events, not complete mailbox or file contents.
 > | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
 > | where isempty(TargetSite) or Site_Url contains TargetSite or OfficeObjectId contains TargetSite
 > | where isempty(TargetFileName) or SourceFileName =~ TargetFileName or DestinationFileName =~ TargetFileName
-> | where isempty(TargetObjectId) or OfficeObjectId =~ TargetObjectId or tostring(ListItemUniqueId) =~ TargetObjectId
-> | where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
 > | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
 > | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
 >     OfficeWorkload, Operation, UserId, Actor, OfficeObjectId, Site_Url, SourceFileName,
@@ -440,7 +362,7 @@ Results are observed events, not complete mailbox or file contents.
 >     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, SourceRecordId, OfficeId,
 >     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
 >     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId, EvidenceRecordKey
-> | top min_of(MaxRows, 1000) by TimeGenerated desc
+> | top 1000 by TimeGenerated desc
 > ```
 > </details>
 
@@ -450,13 +372,13 @@ Results are observed events, not complete mailbox or file contents.
 <summary><strong>OneDrive</strong></summary>
 
 > <details>
-> <summary><strong>User File activity</strong></summary>
+> <summary>✅ <strong>User File activity</strong></summary>
 >
 > Query file: [OneDrive/User-File-activity.kql](../OneDrive/User-File-activity.kql).
 >
 > ```kql
 > // OneDrive > User File activity
-> // DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
+> // Sentinel OfficeActivity only.
 > // Explicit non-sync file operations; this allowlist is not exhaustive and does not reveal file contents.
 > // SharePoint-labeled personal OneDrive records qualify by OfficeObjectId/Site_Url fallback.
 > let StartTime = ago(30d);
@@ -465,9 +387,6 @@ Results are observed events, not complete mailbox or file contents.
 > let TargetOperation = "";     // Exact operation from the allowlist below.
 > let TargetSite = "";          // Case-insensitive substring in Site_Url or OfficeObjectId.
 > let TargetFileName = "";      // Exact SourceFileName or DestinationFileName.
-> let TargetObjectId = "";      // Exact OfficeObjectId or ListItemUniqueId.
-> let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
-> let MaxRows = 1000;
 > OfficeActivity
 > | where TimeGenerated between (StartTime .. EndTime)
 > | extend IsPersonalLocation = Site_Url contains "-my.sharepoint.com" or OfficeObjectId contains "-my.sharepoint.com"
@@ -480,8 +399,6 @@ Results are observed events, not complete mailbox or file contents.
 > | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
 > | where isempty(TargetSite) or Site_Url contains TargetSite or OfficeObjectId contains TargetSite
 > | where isempty(TargetFileName) or SourceFileName =~ TargetFileName or DestinationFileName =~ TargetFileName
-> | where isempty(TargetObjectId) or OfficeObjectId =~ TargetObjectId or tostring(ListItemUniqueId) =~ TargetObjectId
-> | where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
 > | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
 > | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
 >     OfficeWorkload, Operation, UserId, Actor, OfficeObjectId, Site_Url, SourceFileName,
@@ -498,18 +415,18 @@ Results are observed events, not complete mailbox or file contents.
 >     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, SourceRecordId, OfficeId,
 >     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
 >     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId, EvidenceRecordKey
-> | top min_of(MaxRows, 1000) by TimeGenerated desc
+> | top 1000 by TimeGenerated desc
 > ```
 > </details>
 
 > <details>
-> <summary><strong>Sync activity</strong></summary>
+> <summary>✅ <strong>Sync activity</strong></summary>
 >
 > Query file: [OneDrive/Sync-activity.kql](../OneDrive/Sync-activity.kql).
 >
 > ```kql
 > // OneDrive > Sync activity
-> // DRAFT: live execution confirmed; positive coverage validation pending. Sentinel OfficeActivity only.
+> // Sentinel OfficeActivity only. Tested live with the signed-in OneDrive.exe client (FileSyncUploadedFull); download and partial operations were not observed in the tenant.
 > // Only explicit full/partial sync upload/download operations; generic FileUploaded is NOT sync evidence.
 > // Partial operations are deprecated legacy Groove.exe evidence, retained for historical investigations.
 > // A reproducible sync test requires the signed-in OneDrive.exe client, not a Graph upload.
@@ -520,9 +437,6 @@ Results are observed events, not complete mailbox or file contents.
 > let TargetOperation = "";     // Exact full/partial sync operation from the allowlist below.
 > let TargetSite = "";          // Case-insensitive substring in Site_Url or OfficeObjectId.
 > let TargetFileName = "";      // Exact SourceFileName or DestinationFileName.
-> let TargetObjectId = "";      // Exact OfficeObjectId or ListItemUniqueId.
-> let TargetRecordId = "";      // Exact SourceRecordId or OfficeId.
-> let MaxRows = 1000;
 > OfficeActivity
 > | where TimeGenerated between (StartTime .. EndTime)
 > | extend IsPersonalLocation = Site_Url contains "-my.sharepoint.com" or OfficeObjectId contains "-my.sharepoint.com"
@@ -533,8 +447,6 @@ Results are observed events, not complete mailbox or file contents.
 > | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
 > | where isempty(TargetSite) or Site_Url contains TargetSite or OfficeObjectId contains TargetSite
 > | where isempty(TargetFileName) or SourceFileName =~ TargetFileName or DestinationFileName =~ TargetFileName
-> | where isempty(TargetObjectId) or OfficeObjectId =~ TargetObjectId or tostring(ListItemUniqueId) =~ TargetObjectId
-> | where isempty(TargetRecordId) or tostring(SourceRecordId) =~ TargetRecordId or tostring(OfficeId) =~ TargetRecordId
 > | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
 > | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
 >     OfficeWorkload, Operation, UserId, Actor, OfficeObjectId, Site_Url, SourceFileName,
@@ -551,7 +463,7 @@ Results are observed events, not complete mailbox or file contents.
 >     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, SourceRecordId, OfficeId,
 >     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
 >     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId, EvidenceRecordKey
-> | top min_of(MaxRows, 1000) by TimeGenerated desc
+> | top 1000 by TimeGenerated desc
 > ```
 > </details>
 

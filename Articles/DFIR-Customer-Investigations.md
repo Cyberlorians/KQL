@@ -2,7 +2,7 @@
 
 Expand a customer request to copy its full KQL. Set the parameters before running; default window: last 30 days. Each query is also saved as a `.kql` file under its product folder.
 
-These queries are written for the unified Defender portal (Microsoft Sentinel and Defender XDR together) and we recommend running them there. Email queries use `TimeGenerated`, SharePoint and OneDrive queries read the Sentinel `OfficeActivity` table (Microsoft 365 connector with SharePoint enabled), and Teams call and meeting queries read the Defender XDR `CallActivityEvents` table. If you are not unified, the table or timestamp column may differ, for example replace `TimeGenerated` with `Timestamp` in Defender XDR only, so adjust the query or, better, unify Sentinel and Defender XDR. A green check mark means the query was tested against live tenant data. See [Collaboration connectors and validation](Collaboration-Connectors.md).
+These queries are written for the unified Defender portal (Microsoft Sentinel and Defender XDR together) and we recommend running them there. Email queries use `TimeGenerated`, SharePoint and OneDrive queries read the Sentinel `OfficeActivity` table (Microsoft 365 connector with SharePoint enabled), Teams call and meeting queries read the Defender XDR `CallActivityEvents` table, and User Logon Events queries read `SigninLogs` and `AADNonInteractiveUserSignInLogs` (Entra), `DeviceLogonEvents` (Defender for Endpoint) and `IdentityLogonEvents` (Defender for Identity). If you are not unified, the table or timestamp column may differ, for example replace `TimeGenerated` with `Timestamp` in Defender XDR only, so adjust the query or, better, unify Sentinel and Defender XDR. A green check mark means the query was tested against live tenant data. See [Collaboration connectors and validation](Collaboration-Connectors.md).
 
 Results are observed events, not complete mailbox or file contents.
 
@@ -490,6 +490,137 @@ Results are observed events, not complete mailbox or file contents.
 >     SourceRelativeUrl, DestinationRelativeUrl, ClientIP, ActorIpAddress, ResultStatus,
 >     IsPersonalLocation, ListItemUniqueId, SourceRecordId, OfficeId, Actor,
 >     ExtraProperties, OperationProperties, Event_Data
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+</details>
+
+<details>
+<summary><strong>User Logon Events</strong></summary>
+
+> <details>
+> <summary>✅ <strong>Entra sign-ins</strong></summary>
+>
+> Query file: [Entra/User-logon-events.kql](../Entra/User-logon-events.kql).
+>
+> ```kql
+> // User Logon Events > Microsoft Entra sign-ins
+> // Objective: Shows every Microsoft Entra ID sign-in by a user (interactive and, optionally, non-interactive), with the user,
+> // outcome, application, resource, IP address, location, client and conditional access result. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). Sources: SigninLogs and AADNonInteractiveUserSignInLogs (Sentinel tables).
+> // Non-interactive sign-ins are token refreshes and background sign-ins and are far more numerous than interactive ones.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, all IP addresses, successes and failures).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let IncludeNonInteractive = true;       // Example: false (interactive sign-ins only)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"] (matches the user principal name)
+> let TargetIPAddresses = dynamic([]);    // Example: ["203.0.113.10"] (exact client IP address)
+> let TargetOutcomes = dynamic([]);       // Example: ["Failure"] (Success or Failure; empty = both)
+> //
+> // ----- Part 1: Filter Entra sign-ins -----
+> //
+> union
+>     (SigninLogs
+>         | extend SignInType = "Interactive", DeviceDetailText = tostring(DeviceDetail)),
+>     (AADNonInteractiveUserSignInLogs
+>         | where IncludeNonInteractive
+>         | extend SignInType = "Non-interactive", DeviceDetailText = tostring(DeviceDetail))
+> | where TimeGenerated between (StartTime .. EndTime)
+> | extend Outcome = iff(ResultType == "0", "Success", "Failure")
+> | where (array_length(TargetUsers) == 0 or UserPrincipalName in~ (TargetUsers))
+> | where (array_length(TargetIPAddresses) == 0 or IPAddress in (TargetIPAddresses))
+> | where (array_length(TargetOutcomes) == 0 or Outcome in~ (TargetOutcomes))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, UserPrincipalName, UserDisplayName, UserType, SignInType, Outcome, ResultType, ResultDescription,
+>     AppDisplayName, ResourceDisplayName, IPAddress, Location, ClientAppUsed, UserAgent,
+>     AuthenticationRequirement, ConditionalAccessStatus, DeviceDetail = DeviceDetailText,
+>     UserId, CorrelationId, Id
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Endpoint (device) logons</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-logon-events.kql](../Microsoft%20Defender%20for%20Endpoint/Device-logon-events.kql).
+>
+> ```kql
+> // Device Logon Events
+> // Objective: Shows who logged on (or tried to log on) to which device, with the account, logon type, remote device and IP,
+> // protocol and failure reason, plus the process that initiated the logon. Raw events; failures and successes are both returned.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceLogonEvents (Microsoft Defender for Endpoint). LogonSuccessAggregatedReport rows are MDE's own roll-ups of repeated logons.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices, all logon types, successes and failures).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> let TargetLogonTypes = dynamic([]);     // Example: ["RemoteInteractive", "Interactive"] (Interactive, RemoteInteractive, Network, Batch, Service, Local, Unknown)
+> let TargetActionTypes = dynamic([]);    // Example: ["LogonFailed"] (LogonSuccess, LogonFailed, LogonAttempted, LogonSuccessAggregatedReport)
+> //
+> // ----- Part 1: Filter device logon activity -----
+> //
+> DeviceLogonEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where (array_length(TargetUsers) == 0 or AccountName in~ (TargetUsers)
+>     or strcat(AccountDomain, "\\", AccountName) in~ (TargetUsers) or AccountSid in~ (TargetUsers))
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> | where (array_length(TargetLogonTypes) == 0 or LogonType in~ (TargetLogonTypes))
+> | where (array_length(TargetActionTypes) == 0 or ActionType in~ (TargetActionTypes))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, AccountDomain, AccountName, ActionType, LogonType, DeviceName,
+>     RemoteDeviceName, RemoteIP, RemotePort, Protocol, FailureReason, IsLocalAdmin,
+>     AccountSid, LogonId, InitiatingProcessFileName, InitiatingProcessCommandLine,
+>     InitiatingProcessAccountName, InitiatingProcessAccountDomain, DeviceId, ReportId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Active Directory and identity logons</strong></summary>
+>
+> Query file: [Microsoft Defender for Identity/Identity-logon-events.kql](../Microsoft%20Defender%20for%20Identity/Identity-logon-events.kql).
+>
+> ```kql
+> // User Logon Events > Active Directory and identity logons
+> // Objective: Shows user logons and failed logons seen by Microsoft Defender for Identity, which covers on-premises Active Directory
+> // (Kerberos, NTLM, RDP) and logons to cloud applications, with the user, logon type, protocol, source device, destination and IP.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: IdentityLogonEvents. Raw events; failures and successes are both returned.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices, successes and failures).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "jdoe"] (matches the UPN or the account name)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "dc01"] (case-insensitive whole-word match on the source or destination device name)
+> let TargetActionTypes = dynamic([]);    // Example: ["LogonFailed"] (LogonSuccess or LogonFailed; empty = both)
+> //
+> // ----- Part 1: Filter identity logons -----
+> //
+> IdentityLogonEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where (array_length(TargetUsers) == 0 or AccountUpn in~ (TargetUsers) or AccountName in~ (TargetUsers))
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices) or DestinationDeviceName has_any (TargetDevices))
+> | where (array_length(TargetActionTypes) == 0 or ActionType in~ (TargetActionTypes))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, AccountUpn, AccountName, AccountDomain, ActionType, LogonType, Protocol, FailureReason,
+>     Application, DeviceName, DestinationDeviceName, IPAddress, Port, DestinationIPAddress, DestinationPort,
+>     Location, ISP, AccountSid, AccountObjectId, ReportId
 > | top 1000 by TimeGenerated desc
 > ```
 > </details>

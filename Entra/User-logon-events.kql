@@ -1,0 +1,37 @@
+// User Logon Events > Microsoft Entra sign-ins
+// Objective: Shows every Microsoft Entra ID sign-in by a user (interactive and, optionally, non-interactive), with the user,
+// outcome, application, resource, IP address, location, client and conditional access result. Raw events.
+// Written for the unified Defender portal (Sentinel + XDR). Sources: SigninLogs and AADNonInteractiveUserSignInLogs (Sentinel tables).
+// Non-interactive sign-ins are token refreshes and background sign-ins and are far more numerous than interactive ones.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all users, all IP addresses, successes and failures).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let IncludeNonInteractive = true;       // Example: false (interactive sign-ins only)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"] (matches the user principal name)
+let TargetIPAddresses = dynamic([]);    // Example: ["203.0.113.10"] (exact client IP address)
+let TargetOutcomes = dynamic([]);       // Example: ["Failure"] (Success or Failure; empty = both)
+//
+// ----- Part 1: Filter Entra sign-ins -----
+//
+union
+    (SigninLogs
+        | extend SignInType = "Interactive", DeviceDetailText = tostring(DeviceDetail)),
+    (AADNonInteractiveUserSignInLogs
+        | where IncludeNonInteractive
+        | extend SignInType = "Non-interactive", DeviceDetailText = tostring(DeviceDetail))
+| where TimeGenerated between (StartTime .. EndTime)
+| extend Outcome = iff(ResultType == "0", "Success", "Failure")
+| where (array_length(TargetUsers) == 0 or UserPrincipalName in~ (TargetUsers))
+| where (array_length(TargetIPAddresses) == 0 or IPAddress in (TargetIPAddresses))
+| where (array_length(TargetOutcomes) == 0 or Outcome in~ (TargetOutcomes))
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, UserPrincipalName, UserDisplayName, UserType, SignInType, Outcome, ResultType, ResultDescription,
+    AppDisplayName, ResourceDisplayName, IPAddress, Location, ClientAppUsed, UserAgent,
+    AuthenticationRequirement, ConditionalAccessStatus, DeviceDetail = DeviceDetailText,
+    UserId, CorrelationId, Id
+| top 1000 by TimeGenerated desc

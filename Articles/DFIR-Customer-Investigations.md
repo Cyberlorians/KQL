@@ -10,7 +10,7 @@ Results are observed events, not complete mailbox or file contents.
 <summary><strong>Email</strong></summary>
 
 > <details>
-> <summary><strong>External communications</strong></summary>
+> <summary>✅ <strong>External communications</strong></summary>
 >
 > Query file: [Microsoft Defender for Office 365/External-communications.kql](../Microsoft%20Defender%20for%20Office%20365/External-communications.kql).
 >
@@ -45,7 +45,7 @@ Results are observed events, not complete mailbox or file contents.
 > </details>
 
 > <details>
-> <summary><strong>Specific attachment filenames and hashes</strong></summary>
+> <summary>✅ <strong>Specific attachment filenames and hashes</strong></summary>
 >
 > Query file: [Microsoft Defender for Office 365/Specific-attachment-filenames-and-hashes.kql](../Microsoft%20Defender%20for%20Office%20365/Specific-attachment-filenames-and-hashes.kql).
 >
@@ -91,7 +91,7 @@ Results are observed events, not complete mailbox or file contents.
 > </details>
 
 > <details>
-> <summary><strong>Specific Subject lines</strong></summary>
+> <summary>✅ <strong>Specific Subject lines</strong></summary>
 >
 > Query file: [Microsoft Defender for Office 365/Specific-Subject-lines.kql](../Microsoft%20Defender%20for%20Office%20365/Specific-Subject-lines.kql).
 >
@@ -126,7 +126,7 @@ Results are observed events, not complete mailbox or file contents.
 > </details>
 
 > <details>
-> <summary><strong>Specific sender and recipients</strong></summary>
+> <summary>✅ <strong>Specific sender and recipients</strong></summary>
 >
 > Query file: [Microsoft Defender for Office 365/Specific-sender-and-recipients.kql](../Microsoft%20Defender%20for%20Office%20365/Specific-sender-and-recipients.kql).
 >

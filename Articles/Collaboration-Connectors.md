@@ -25,11 +25,13 @@ Edit the `let` values at the top of each query. Every query returns all rows by 
 | `TargetSenders`, `TargetRecipients` | Email (sender and recipients) | Arrays of addresses; senders match the visible or envelope sender. |
 | `TargetSubjects` | Email (subject lines) | Array of words or phrases; whole-word match, case-insensitive. |
 | `TargetFileNames`, `TargetSHA256` | Email (attachments) | Filename words (whole-word, case-insensitive) and SHA-256 hashes. |
-| `TargetUser` | SharePoint, OneDrive | Exact `UserId` (case-insensitive), or a substring of raw `Actor` when that field is populated. |
+| `TargetUsers` | SharePoint | Array of addresses; matches `UserId` (case-insensitive exact) or the raw `Actor`. |
+| `TargetOperations`, `TargetSites`, `TargetFileNames` | SharePoint files | Arrays: `FileUploaded` / `FileDownloaded` (empty = both); site or object URL words (whole-word, case-insensitive); exact file names. |
+| `TargetSites`, `TargetFileNames` | SharePoint site/page | Arrays: site or object URL words (whole-word, case-insensitive); exact page names. |
+| `TargetUser` | OneDrive | Exact `UserId` (case-insensitive), or a substring of raw `Actor` when that field is populated. |
 | `TargetCallIds`, `TargetActivityTypes` | Teams | Arrays of exact `CallId` values and `ActivityType` values (`JoinCall`, `LeaveCall`, `StartShare`, `StopShare`). |
-| `TargetOperation` | SharePoint files, OneDrive | Exact operation from the query's allowlist. |
-| `TargetSite` | SharePoint, OneDrive | Case-insensitive substring of `Site_Url` or `OfficeObjectId`. |
-| `TargetFileName` | SharePoint, OneDrive | Exact source or destination file name (case-insensitive). |
+| `TargetOperation` | OneDrive | Exact operation from the query's allowlist. |
+| `TargetSite`, `TargetFileName` | OneDrive | Case-insensitive substring of `Site_Url` or `OfficeObjectId`; exact source or destination file name. |
 | Row cap | All | Email, Teams, SharePoint and OneDrive queries return the latest 1000 rows. |
 
 A capped result can omit evidence. Narrow the time window rather than treating a capped result as complete.

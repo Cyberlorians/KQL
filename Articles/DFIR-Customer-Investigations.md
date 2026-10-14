@@ -291,16 +291,22 @@ Results are observed events, not complete mailbox or file contents.
 >
 > ```kql
 > // SharePoint Activity > Site/Page accessed/created/modified
-> // Sentinel OfficeActivity only.
-> // Page creation/modification/access via FILE operations is restricted to .aspx paths.
-> // Explicit page/site operations remain separately labeled; no document modification is called a page edit.
+> // Objective: Shows who accessed, created or modified a SharePoint site or page (personal OneDrive sites are excluded),
+> // with the user, operation, site, page name and client IP for each event. Sentinel OfficeActivity only.
+> // Page activity from FILE operations is limited to .aspx paths; explicit page/site operations are labeled separately.
 > // This is an explicit operation allowlist, not a claim of exhaustive site/page auditing.
-> // Site access is evidenced by the page-access row's site/object URL, not an invented SiteViewed event.
-> let StartTime = ago(30d);
-> let EndTime = now();
-> let TargetUser = "";          // Exact UserId OR case-insensitive substring in raw Actor.
-> let TargetSite = "";          // Case-insensitive substring in Site_Url or OfficeObjectId.
-> let TargetFileName = "";      // Exact page/file name (SourceFileName or DestinationFileName); site-only events may have neither.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, all sites, all pages).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"] (matches UserId, or the raw Actor)
+> let TargetSites = dynamic([]);          // Example: ["contoso.sharepoint.com/sites/HR"] (case-insensitive whole-word match on the site or object URL)
+> let TargetFileNames = dynamic([]);      // Example: ["Home.aspx"] (exact page or file name, source or destination; site-only events have none)
+> //
+> // ----- Part 1: Filter SharePoint site and page activity -----
+> //
 > OfficeActivity
 > | where TimeGenerated between (StartTime .. EndTime)
 > | where OfficeWorkload =~ "SharePoint"
@@ -322,25 +328,17 @@ Results are observed events, not complete mailbox or file contents.
 >     IsAspxPath and Operation in~ ("FileModified", "FileModifiedExtended", "FileRenamed", "FileMoved"), "Page modified (file audit)",
 >     "")
 > | where isnotempty(ActivityKind)
-> | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
-> | where isempty(TargetSite) or Site_Url contains TargetSite or OfficeObjectId contains TargetSite
-> | where isempty(TargetFileName) or SourceFileName =~ TargetFileName or DestinationFileName =~ TargetFileName
-> | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
-> | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
->     OfficeWorkload, Operation, UserId, Actor, OfficeObjectId, Site_Url, SourceFileName,
->     DestinationFileName, SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId,
->     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
->     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId)))
-> | extend RecordIdentity = case(isnotempty(tostring(SourceRecordId)), strcat("SourceRecordId:", tostring(SourceRecordId)),
->     isnotempty(tostring(OfficeId)), strcat("OfficeId:", tostring(OfficeId)),
->     strcat("Fallback:", hash_sha256(tostring(pack_array(TimeGenerated, EvidenceFingerprint)))))
-> | extend EvidenceRecordKey = hash_sha256(tostring(pack_array(OrganizationId, RecordIdentity, EvidenceFingerprint)))
-> | summarize arg_max(TimeGenerated, *) by EvidenceRecordKey
-> | project TimeGenerated, OrganizationId, OfficeWorkload, Operation, ActivityKind, IsAspxPath,
->     UserId, Actor, Site_Url, OfficeObjectId, SourceFileName, DestinationFileName,
->     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, SourceRecordId, OfficeId,
->     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
->     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId, EvidenceRecordKey
+> | where (array_length(TargetUsers) == 0 or UserId in~ (TargetUsers) or tostring(Actor) has_any (TargetUsers))
+> | where (array_length(TargetSites) == 0 or Site_Url has_any (TargetSites) or OfficeObjectId has_any (TargetSites))
+> | where (array_length(TargetFileNames) == 0 or SourceFileName in~ (TargetFileNames) or DestinationFileName in~ (TargetFileNames))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, UserId, Operation, ActivityKind, Site_Url,
+>     SourceFileName, DestinationFileName, OfficeObjectId,
+>     SourceRelativeUrl, DestinationRelativeUrl, ClientIP, ActorIpAddress, ResultStatus,
+>     IsAspxPath, ListItemUniqueId, SourceRecordId, OfficeId, Actor,
+>     ExtraProperties, OperationProperties, Event_Data
 > | top 1000 by TimeGenerated desc
 > ```
 > </details>
@@ -352,15 +350,23 @@ Results are observed events, not complete mailbox or file contents.
 >
 > ```kql
 > // SharePoint Activity > Files uploaded/downloaded from a SharePoint site
-> // Sentinel OfficeActivity only.
-> // Only FileUploaded/FileDownloaded: sync-full/partial operations are deliberately NOT included.
-> // Operation is audit evidence, not proof of completion, file bytes, or file content.
-> let StartTime = ago(30d);
-> let EndTime = now();
-> let TargetUser = "";          // Exact UserId OR case-insensitive substring in raw Actor.
-> let TargetOperation = "";     // Exact FileUploaded or FileDownloaded.
-> let TargetSite = "";          // Case-insensitive substring in Site_Url or OfficeObjectId.
-> let TargetFileName = "";      // Exact SourceFileName or DestinationFileName.
+> // Objective: Shows who uploaded or downloaded files on SharePoint sites (personal OneDrive sites are excluded),
+> // with the user, operation, site, file name and client IP for each event. Sentinel OfficeActivity only.
+> // Only FileUploaded and FileDownloaded: sync operations are deliberately NOT included.
+> // An operation is audit evidence, not proof of completion, file bytes, or file content.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, all sites, all files, both operations).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"] (matches UserId, or the raw Actor)
+> let TargetOperations = dynamic([]);     // Example: ["FileDownloaded"] (FileUploaded or FileDownloaded; empty = both)
+> let TargetSites = dynamic([]);          // Example: ["contoso.sharepoint.com/sites/HR"] (case-insensitive whole-word match on the site or object URL)
+> let TargetFileNames = dynamic([]);      // Example: ["Q3-payroll.xlsx"] (exact file name, source or destination)
+> //
+> // ----- Part 1: Filter SharePoint file uploads and downloads -----
+> //
 > OfficeActivity
 > | where TimeGenerated between (StartTime .. EndTime)
 > | where OfficeWorkload =~ "SharePoint"
@@ -368,26 +374,18 @@ Results are observed events, not complete mailbox or file contents.
 >     or Site_Url contains "/personal/" or OfficeObjectId contains "/personal/"
 > | where not(IsPersonalLocation)
 > | where Operation in~ ("FileUploaded", "FileDownloaded")
-> | where isempty(TargetOperation) or Operation =~ TargetOperation
-> | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
-> | where isempty(TargetSite) or Site_Url contains TargetSite or OfficeObjectId contains TargetSite
-> | where isempty(TargetFileName) or SourceFileName =~ TargetFileName or DestinationFileName =~ TargetFileName
-> | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
-> | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
->     OfficeWorkload, Operation, UserId, Actor, OfficeObjectId, Site_Url, SourceFileName,
->     DestinationFileName, SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId,
->     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
->     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId)))
-> | extend RecordIdentity = case(isnotempty(tostring(SourceRecordId)), strcat("SourceRecordId:", tostring(SourceRecordId)),
->     isnotempty(tostring(OfficeId)), strcat("OfficeId:", tostring(OfficeId)),
->     strcat("Fallback:", hash_sha256(tostring(pack_array(TimeGenerated, EvidenceFingerprint)))))
-> | extend EvidenceRecordKey = hash_sha256(tostring(pack_array(OrganizationId, RecordIdentity, EvidenceFingerprint)))
-> | summarize arg_max(TimeGenerated, *) by EvidenceRecordKey
-> | project TimeGenerated, OrganizationId, OfficeWorkload, Operation, UserId, Actor,
->     Site_Url, OfficeObjectId, SourceFileName, DestinationFileName,
->     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, SourceRecordId, OfficeId,
->     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
->     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId, EvidenceRecordKey
+> | where (array_length(TargetOperations) == 0 or Operation in~ (TargetOperations))
+> | where (array_length(TargetUsers) == 0 or UserId in~ (TargetUsers) or tostring(Actor) has_any (TargetUsers))
+> | where (array_length(TargetSites) == 0 or Site_Url has_any (TargetSites) or OfficeObjectId has_any (TargetSites))
+> | where (array_length(TargetFileNames) == 0 or SourceFileName in~ (TargetFileNames) or DestinationFileName in~ (TargetFileNames))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, UserId, Operation, Site_Url,
+>     SourceFileName, DestinationFileName, OfficeObjectId,
+>     SourceRelativeUrl, DestinationRelativeUrl, ClientIP, ActorIpAddress, ResultStatus,
+>     ListItemUniqueId, SourceRecordId, OfficeId, Actor,
+>     ExtraProperties, OperationProperties, Event_Data
 > | top 1000 by TimeGenerated desc
 > ```
 > </details>

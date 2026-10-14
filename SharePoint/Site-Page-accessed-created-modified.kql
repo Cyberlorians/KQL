@@ -1,6 +1,7 @@
 // SharePoint Activity > Site/Page accessed/created/modified
 // Objective: Shows who accessed, created or modified a SharePoint site or page (personal OneDrive sites are excluded),
-// with the user, operation, site, page name and client IP for each event. Sentinel OfficeActivity only.
+// with the user, operation, site, page name and client IP for each event.
+// Written for the unified Defender portal (Sentinel + XDR); OfficeActivity is a Sentinel table.
 // Page activity from FILE operations is limited to .aspx paths; explicit page/site operations are labeled separately.
 // This is an explicit operation allowlist, not a claim of exhaustive site/page auditing.
 //

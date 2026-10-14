@@ -28,10 +28,10 @@ Edit the `let` values at the top of each query. Every query returns all rows by 
 | `TargetUsers` | SharePoint | Array of addresses; matches `UserId` (case-insensitive exact) or the raw `Actor`. |
 | `TargetOperations`, `TargetSites`, `TargetFileNames` | SharePoint files | Arrays: `FileUploaded` / `FileDownloaded` (empty = both); site or object URL words (whole-word, case-insensitive); exact file names. |
 | `TargetSites`, `TargetFileNames` | SharePoint site/page | Arrays: site or object URL words (whole-word, case-insensitive); exact page names. |
-| `TargetUser` | OneDrive | Exact `UserId` (case-insensitive), or a substring of raw `Actor` when that field is populated. |
+| `TargetUsers` | OneDrive | Array of addresses; matches `UserId` (case-insensitive exact) or the raw `Actor`. |
 | `TargetCallIds`, `TargetActivityTypes` | Teams | Arrays of exact `CallId` values and `ActivityType` values (`JoinCall`, `LeaveCall`, `StartShare`, `StopShare`). |
-| `TargetOperation` | OneDrive | Exact operation from the query's allowlist. |
-| `TargetSite`, `TargetFileName` | OneDrive | Case-insensitive substring of `Site_Url` or `OfficeObjectId`; exact source or destination file name. |
+| `TargetOperations` | OneDrive | Array of operations from the query's allowlist (empty = all). |
+| `TargetSites`, `TargetFileNames` | OneDrive | Arrays: site or object URL words (whole-word, case-insensitive); exact source or destination file names. |
 | Row cap | All | Email, Teams, SharePoint and OneDrive queries return the latest 1000 rows. |
 
 A capped result can omit evidence. Narrow the time window rather than treating a capped result as complete.

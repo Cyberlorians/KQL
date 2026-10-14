@@ -1,5 +1,5 @@
 // Teams Calls and Meeting activities > Meeting Duration
-// Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
+// Written for the unified Defender portal. CallActivityEvents is an XDR table and is not available in Sentinel / Log Analytics alone.
 // One row per user per CallId: first JoinCall to last LeaveCall. Rejoins inside one call are included in the span.
 // If the join or leave falls outside the time window, or is not recorded, Duration is empty and DurationStatus says why.
 //

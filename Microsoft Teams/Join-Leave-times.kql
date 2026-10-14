@@ -1,5 +1,5 @@
 // Teams Calls and Meeting activities > Join/Leave times
-// Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
+// Written for the unified Defender portal. CallActivityEvents is an XDR table and is not available in Sentinel / Log Analytics alone.
 // One row per call activity event (JoinCall, LeaveCall and any other ActivityType); set TargetActivityTypes to ["JoinCall", "LeaveCall"] for join/leave only.
 // A join or leave can be reported more than once (different ActivityId).
 //

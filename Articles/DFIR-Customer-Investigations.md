@@ -2,7 +2,7 @@
 
 Expand a customer request to copy its full KQL. Set the parameters before running; default window: last 30 days. Each query is also saved as a `.kql` file under its product folder.
 
-Email queries use `TimeGenerated`; without Sentinel, replace every `TimeGenerated` with `Timestamp` in Defender XDR Advanced Hunting. SharePoint and OneDrive queries read the Sentinel `OfficeActivity` table (Microsoft 365 connector with SharePoint enabled). Teams call and meeting queries read the Defender XDR `CallActivityEvents` table and run in Defender XDR Advanced Hunting only. A green check mark means the query was tested against live tenant data. See [Collaboration connectors and validation](Collaboration-Connectors.md).
+These queries are written for the unified Defender portal (Microsoft Sentinel and Defender XDR together) and we recommend running them there. Email queries use `TimeGenerated`, SharePoint and OneDrive queries read the Sentinel `OfficeActivity` table (Microsoft 365 connector with SharePoint enabled), and Teams call and meeting queries read the Defender XDR `CallActivityEvents` table. If you are not unified, the table or timestamp column may differ, for example replace `TimeGenerated` with `Timestamp` in Defender XDR only, so adjust the query or, better, unify Sentinel and Defender XDR. A green check mark means the query was tested against live tenant data. See [Collaboration connectors and validation](Collaboration-Connectors.md).
 
 Results are observed events, not complete mailbox or file contents.
 
@@ -18,7 +18,7 @@ Results are observed events, not complete mailbox or file contents.
 > // External communications
 > // Objective: Lists email sent to or received from outside the organization (Inbound and Outbound) with the sender,
 > // recipient, subject, delivery and threat details. Internal-only mail is excluded by design.
-> // Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
 > //
 > // ----- Part 0: Analyst-Driven Targeting (Optional) -----
 > // Leave these empty to return all results (all users, both directions).
@@ -57,7 +57,7 @@ Results are observed events, not complete mailbox or file contents.
 > // Specific attachment filenames and hashes
 > // Objective: Finds email attachments by filename or SHA-256, showing the sender, recipient, FileName, SHA256,
 > // FileSize, FileType and threat details for each attachment.
-> // Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
 > //
 > // ----- Part 0: Analyst-Driven Targeting (Optional) -----
 > // Leave these empty to return all results (every attachment, all users).
@@ -95,7 +95,7 @@ Results are observed events, not complete mailbox or file contents.
 > // Specific Subject lines
 > // Objective: Finds email by subject line, showing the subject, sender, recipient, direction,
 > // delivery result, threat details and attachment/URL counts.
-> // Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
 > //
 > // ----- Part 0: Analyst-Driven Targeting (Optional) -----
 > // Leave these empty to return all results (every subject, all users).
@@ -132,7 +132,7 @@ Results are observed events, not complete mailbox or file contents.
 > // Specific sender and recipients
 > // Objective: Shows who emailed whom: visible (From) and envelope (MailFrom) sender, recipient, subject,
 > // direction (Inbound, Outbound or Intra-org), delivery result and attachment/URL counts.
-> // Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
 > //
 > // ----- Part 0: Analyst-Driven Targeting (Optional) -----
 > // Leave these empty to return all results (all senders, all recipients).
@@ -174,7 +174,7 @@ Results are observed events, not complete mailbox or file contents.
 >
 > ```kql
 > // Teams Calls and Meeting activities > Join/Leave times
-> // Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
+> // Written for the unified Defender portal. CallActivityEvents is an XDR table and is not available in Sentinel / Log Analytics alone.
 > // One row per call activity event (JoinCall, LeaveCall and any other ActivityType); set TargetActivityTypes to ["JoinCall", "LeaveCall"] for join/leave only.
 > // A join or leave can be reported more than once (different ActivityId).
 > //
@@ -207,7 +207,7 @@ Results are observed events, not complete mailbox or file contents.
 >
 > ```kql
 > // Teams Calls and Meeting activities > Meeting Duration
-> // Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
+> // Written for the unified Defender portal. CallActivityEvents is an XDR table and is not available in Sentinel / Log Analytics alone.
 > // One row per user per CallId: first JoinCall to last LeaveCall. Rejoins inside one call are included in the span.
 > // If the join or leave falls outside the time window, or is not recorded, Duration is empty and DurationStatus says why.
 > //
@@ -253,7 +253,7 @@ Results are observed events, not complete mailbox or file contents.
 >
 > ```kql
 > // Teams Calls and Meeting activities > SharedActivities: was camera or screen shared, mute/unmute etc
-> // Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
+> // Written for the unified Defender portal. CallActivityEvents is an XDR table and is not available in Sentinel / Log Analytics alone.
 > // Returns every ActivityType by default; set TargetActivityTypes to ["StartShare", "StopShare"] to see screen sharing only.
 > // Camera on/off and mute/unmute have not been observed as ActivityTypes in this tenant's data.
 > //
@@ -292,7 +292,8 @@ Results are observed events, not complete mailbox or file contents.
 > ```kql
 > // SharePoint Activity > Site/Page accessed/created/modified
 > // Objective: Shows who accessed, created or modified a SharePoint site or page (personal OneDrive sites are excluded),
-> // with the user, operation, site, page name and client IP for each event. Sentinel OfficeActivity only.
+> // with the user, operation, site, page name and client IP for each event.
+> // Written for the unified Defender portal (Sentinel + XDR); OfficeActivity is a Sentinel table.
 > // Page activity from FILE operations is limited to .aspx paths; explicit page/site operations are labeled separately.
 > // This is an explicit operation allowlist, not a claim of exhaustive site/page auditing.
 > //
@@ -351,7 +352,8 @@ Results are observed events, not complete mailbox or file contents.
 > ```kql
 > // SharePoint Activity > Files uploaded/downloaded from a SharePoint site
 > // Objective: Shows who uploaded or downloaded files on SharePoint sites (personal OneDrive sites are excluded),
-> // with the user, operation, site, file name and client IP for each event. Sentinel OfficeActivity only.
+> // with the user, operation, site, file name and client IP for each event.
+> // Written for the unified Defender portal (Sentinel + XDR); OfficeActivity is a Sentinel table.
 > // Only FileUploaded and FileDownloaded: sync operations are deliberately NOT included.
 > // An operation is audit evidence, not proof of completion, file bytes, or file content.
 > //
@@ -402,15 +404,24 @@ Results are observed events, not complete mailbox or file contents.
 >
 > ```kql
 > // OneDrive > User File activity
-> // Sentinel OfficeActivity only.
+> // Objective: Shows what each user did to files in OneDrive (opened, uploaded, downloaded, modified, copied, moved,
+> // renamed, deleted, restored), with the user, operation, file and client IP for each event.
 > // Explicit non-sync file operations; this allowlist is not exhaustive and does not reveal file contents.
+> // Written for the unified Defender portal (Sentinel + XDR); OfficeActivity is a Sentinel table.
 > // SharePoint-labeled personal OneDrive records qualify by OfficeObjectId/Site_Url fallback.
-> let StartTime = ago(30d);
-> let EndTime = now();
-> let TargetUser = "";          // Exact UserId OR case-insensitive substring in raw Actor.
-> let TargetOperation = "";     // Exact operation from the allowlist below.
-> let TargetSite = "";          // Case-insensitive substring in Site_Url or OfficeObjectId.
-> let TargetFileName = "";      // Exact SourceFileName or DestinationFileName.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, all operations, all files).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"] (matches UserId, or the raw Actor)
+> let TargetOperations = dynamic([]);     // Example: ["FileDownloaded", "FileDeleted"] (any operation from the allowlist below; empty = all)
+> let TargetSites = dynamic([]);          // Example: ["contoso-my.sharepoint.com/personal/user_contoso_com"] (case-insensitive whole-word match on the site or object URL)
+> let TargetFileNames = dynamic([]);      // Example: ["Budget.xlsx"] (exact file name, source or destination)
+> //
+> // ----- Part 1: Filter OneDrive file activity -----
+> //
 > OfficeActivity
 > | where TimeGenerated between (StartTime .. EndTime)
 > | extend IsPersonalLocation = Site_Url contains "-my.sharepoint.com" or OfficeObjectId contains "-my.sharepoint.com"
@@ -419,26 +430,18 @@ Results are observed events, not complete mailbox or file contents.
 > | where Operation in~ ("FileAccessed", "FileAccessedExtended", "FilePreviewed", "FileUploaded", "FileDownloaded",
 >     "FileModified", "FileModifiedExtended", "FileCopied", "FileMoved", "FileRenamed", "FileDeleted",
 >     "FileRecycled", "FileRestored", "FileCheckedIn", "FileCheckedOut", "FileCheckOutDiscarded", "FileVersionDeleted")
-> | where isempty(TargetOperation) or Operation =~ TargetOperation
-> | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
-> | where isempty(TargetSite) or Site_Url contains TargetSite or OfficeObjectId contains TargetSite
-> | where isempty(TargetFileName) or SourceFileName =~ TargetFileName or DestinationFileName =~ TargetFileName
-> | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
-> | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
->     OfficeWorkload, Operation, UserId, Actor, OfficeObjectId, Site_Url, SourceFileName,
->     DestinationFileName, SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId,
->     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
->     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId)))
-> | extend RecordIdentity = case(isnotempty(tostring(SourceRecordId)), strcat("SourceRecordId:", tostring(SourceRecordId)),
->     isnotempty(tostring(OfficeId)), strcat("OfficeId:", tostring(OfficeId)),
->     strcat("Fallback:", hash_sha256(tostring(pack_array(TimeGenerated, EvidenceFingerprint)))))
-> | extend EvidenceRecordKey = hash_sha256(tostring(pack_array(OrganizationId, RecordIdentity, EvidenceFingerprint)))
-> | summarize arg_max(TimeGenerated, *) by EvidenceRecordKey
-> | project TimeGenerated, OrganizationId, OfficeWorkload, Operation, IsPersonalLocation, UserId, Actor,
->     Site_Url, OfficeObjectId, SourceFileName, DestinationFileName,
->     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, SourceRecordId, OfficeId,
->     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
->     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId, EvidenceRecordKey
+> | where (array_length(TargetOperations) == 0 or Operation in~ (TargetOperations))
+> | where (array_length(TargetUsers) == 0 or UserId in~ (TargetUsers) or tostring(Actor) has_any (TargetUsers))
+> | where (array_length(TargetSites) == 0 or Site_Url has_any (TargetSites) or OfficeObjectId has_any (TargetSites))
+> | where (array_length(TargetFileNames) == 0 or SourceFileName in~ (TargetFileNames) or DestinationFileName in~ (TargetFileNames))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, UserId, Operation, OfficeWorkload, Site_Url,
+>     SourceFileName, DestinationFileName, OfficeObjectId,
+>     SourceRelativeUrl, DestinationRelativeUrl, ClientIP, ActorIpAddress, ResultStatus,
+>     IsPersonalLocation, ListItemUniqueId, SourceRecordId, OfficeId, Actor,
+>     ExtraProperties, OperationProperties, Event_Data
 > | top 1000 by TimeGenerated desc
 > ```
 > </details>
@@ -450,43 +453,43 @@ Results are observed events, not complete mailbox or file contents.
 >
 > ```kql
 > // OneDrive > Sync activity
-> // Sentinel OfficeActivity only. Tested live with the signed-in OneDrive.exe client (FileSyncUploadedFull); download and partial operations were not observed in the tenant.
-> // Only explicit full/partial sync upload/download operations; generic FileUploaded is NOT sync evidence.
+> // Objective: Shows files the OneDrive sync client uploaded or downloaded, with the user, operation, file and client IP
+> // for each event. Only explicit full/partial sync operations; generic FileUploaded is NOT sync evidence.
+> // Written for the unified Defender portal (Sentinel + XDR); OfficeActivity is a Sentinel table.
+> // Tested live with the signed-in OneDrive.exe client (FileSyncUploadedFull); download and partial operations were not observed in the tenant.
 > // Partial operations are deprecated legacy Groove.exe evidence, retained for historical investigations.
-> // A reproducible sync test requires the signed-in OneDrive.exe client, not a Graph upload.
 > // Operation labels do not prove full client convergence or disclose file contents.
-> let StartTime = ago(30d);
-> let EndTime = now();
-> let TargetUser = "";          // Exact UserId OR case-insensitive substring in raw Actor.
-> let TargetOperation = "";     // Exact full/partial sync operation from the allowlist below.
-> let TargetSite = "";          // Case-insensitive substring in Site_Url or OfficeObjectId.
-> let TargetFileName = "";      // Exact SourceFileName or DestinationFileName.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, all sync operations, all files).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user2@contoso.com"] (matches UserId, or the raw Actor)
+> let TargetOperations = dynamic([]);     // Example: ["FileSyncUploadedFull"] (FileSyncUploadedFull, FileSyncDownloadedFull, FileSyncUploadedPartial, FileSyncDownloadedPartial; empty = all)
+> let TargetSites = dynamic([]);          // Example: ["contoso-my.sharepoint.com/personal/user_contoso_com"] (case-insensitive whole-word match on the site or object URL)
+> let TargetFileNames = dynamic([]);      // Example: ["Budget.xlsx"] (exact file name, source or destination)
+> //
+> // ----- Part 1: Filter OneDrive sync activity -----
+> //
 > OfficeActivity
 > | where TimeGenerated between (StartTime .. EndTime)
 > | extend IsPersonalLocation = Site_Url contains "-my.sharepoint.com" or OfficeObjectId contains "-my.sharepoint.com"
 >     or Site_Url contains "/personal/" or OfficeObjectId contains "/personal/"
 > | where OfficeWorkload =~ "OneDrive" or (OfficeWorkload =~ "SharePoint" and IsPersonalLocation)
 > | where Operation in~ ("FileSyncUploadedFull", "FileSyncDownloadedFull", "FileSyncUploadedPartial", "FileSyncDownloadedPartial")
-> | where isempty(TargetOperation) or Operation =~ TargetOperation
-> | where isempty(TargetUser) or UserId =~ TargetUser or tostring(Actor) contains TargetUser
-> | where isempty(TargetSite) or Site_Url contains TargetSite or OfficeObjectId contains TargetSite
-> | where isempty(TargetFileName) or SourceFileName =~ TargetFileName or DestinationFileName =~ TargetFileName
-> | extend OrganizationId = tostring(column_ifexists("OrganizationId", ""))
-> | extend EvidenceFingerprint = hash_sha256(tostring(pack_array(
->     OfficeWorkload, Operation, UserId, Actor, OfficeObjectId, Site_Url, SourceFileName,
->     DestinationFileName, SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId,
->     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
->     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId)))
-> | extend RecordIdentity = case(isnotempty(tostring(SourceRecordId)), strcat("SourceRecordId:", tostring(SourceRecordId)),
->     isnotempty(tostring(OfficeId)), strcat("OfficeId:", tostring(OfficeId)),
->     strcat("Fallback:", hash_sha256(tostring(pack_array(TimeGenerated, EvidenceFingerprint)))))
-> | extend EvidenceRecordKey = hash_sha256(tostring(pack_array(OrganizationId, RecordIdentity, EvidenceFingerprint)))
-> | summarize arg_max(TimeGenerated, *) by EvidenceRecordKey
-> | project TimeGenerated, OrganizationId, OfficeWorkload, Operation, IsPersonalLocation, UserId, Actor,
->     Site_Url, OfficeObjectId, SourceFileName, DestinationFileName,
->     SourceRelativeUrl, DestinationRelativeUrl, ListItemUniqueId, SourceRecordId, OfficeId,
->     ClientIP, ActorIpAddress, ResultStatus, ExtraProperties, OperationProperties, Event_Data,
->     JoinTime, LeaveTime, Attendees, Members, ArtifactsShared, MeetingDetailId, ChatThreadId, EvidenceRecordKey
+> | where (array_length(TargetOperations) == 0 or Operation in~ (TargetOperations))
+> | where (array_length(TargetUsers) == 0 or UserId in~ (TargetUsers) or tostring(Actor) has_any (TargetUsers))
+> | where (array_length(TargetSites) == 0 or Site_Url has_any (TargetSites) or OfficeObjectId has_any (TargetSites))
+> | where (array_length(TargetFileNames) == 0 or SourceFileName in~ (TargetFileNames) or DestinationFileName in~ (TargetFileNames))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, UserId, Operation, OfficeWorkload, Site_Url,
+>     SourceFileName, DestinationFileName, OfficeObjectId,
+>     SourceRelativeUrl, DestinationRelativeUrl, ClientIP, ActorIpAddress, ResultStatus,
+>     IsPersonalLocation, ListItemUniqueId, SourceRecordId, OfficeId, Actor,
+>     ExtraProperties, OperationProperties, Event_Data
 > | top 1000 by TimeGenerated desc
 > ```
 > </details>

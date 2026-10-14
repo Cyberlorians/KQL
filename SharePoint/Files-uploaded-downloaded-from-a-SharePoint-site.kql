@@ -1,6 +1,7 @@
 // SharePoint Activity > Files uploaded/downloaded from a SharePoint site
 // Objective: Shows who uploaded or downloaded files on SharePoint sites (personal OneDrive sites are excluded),
-// with the user, operation, site, file name and client IP for each event. Sentinel OfficeActivity only.
+// with the user, operation, site, file name and client IP for each event.
+// Written for the unified Defender portal (Sentinel + XDR); OfficeActivity is a Sentinel table.
 // Only FileUploaded and FileDownloaded: sync operations are deliberately NOT included.
 // An operation is audit evidence, not proof of completion, file bytes, or file content.
 //

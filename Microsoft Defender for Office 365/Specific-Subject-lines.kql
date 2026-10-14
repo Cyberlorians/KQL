@@ -1,7 +1,7 @@
 // Specific Subject lines
 // Objective: Finds email by subject line, showing the subject, sender, recipient, direction,
 // delivery result, threat details and attachment/URL counts.
-// Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
 //
 // ----- Part 0: Analyst-Driven Targeting (Optional) -----
 // Leave these empty to return all results (every subject, all users).

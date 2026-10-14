@@ -1,5 +1,5 @@
 // Teams Calls and Meeting activities > SharedActivities: was camera or screen shared, mute/unmute etc
-// Defender XDR advanced hunting ONLY. CallActivityEvents is not available in Microsoft Sentinel / Log Analytics.
+// Written for the unified Defender portal. CallActivityEvents is an XDR table and is not available in Sentinel / Log Analytics alone.
 // Returns every ActivityType by default; set TargetActivityTypes to ["StartShare", "StopShare"] to see screen sharing only.
 // Camera on/off and mute/unmute have not been observed as ActivityTypes in this tenant's data.
 //

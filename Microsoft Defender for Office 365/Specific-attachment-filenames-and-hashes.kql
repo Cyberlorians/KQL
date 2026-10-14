@@ -1,7 +1,7 @@
 // Specific attachment filenames and hashes
 // Objective: Finds email attachments by filename or SHA-256, showing the sender, recipient, FileName, SHA256,
 // FileSize, FileType and threat details for each attachment.
-// Without Sentinel, replace every TimeGenerated with Timestamp in Defender XDR Advanced Hunting.
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
 //
 // ----- Part 0: Analyst-Driven Targeting (Optional) -----
 // Leave these empty to return all results (every attachment, all users).

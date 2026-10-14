@@ -1,4 +1,4 @@
-# Collaboration data sources and validation
+# Email and collaboration data sources and validation
 
 Queries are on the [DFIR Customer Investigations](DFIR-Customer-Investigations.md) page. This guide covers where each product's data comes from and what was validated in the tenant (2026-10-14).
 
@@ -6,25 +6,31 @@ Queries are on the [DFIR Customer Investigations](DFIR-Customer-Investigations.m
 
 | Product | Query | Data source | Where it runs |
 |---|---|---|---|
-| Microsoft Teams | Join/Leave times, Meeting Duration, SharedActivities | Defender XDR `CallActivityEvents` | Defender XDR Advanced Hunting only. The table is not available in Sentinel / Log Analytics and has no Sentinel connector. |
-| SharePoint | Site/Page accessed/created/modified, Files uploaded/downloaded | Sentinel `OfficeActivity` | Sentinel / Log Analytics workspace logs |
-| OneDrive | User File activity, Sync activity | Sentinel `OfficeActivity` | Sentinel / Log Analytics workspace logs |
+| Email (Microsoft Defender for Office 365) | [External communications](../Microsoft%20Defender%20for%20Office%20365/External-communications.kql), [Specific attachment filenames and hashes](../Microsoft%20Defender%20for%20Office%20365/Specific-attachment-filenames-and-hashes.kql), [Specific Subject lines](../Microsoft%20Defender%20for%20Office%20365/Specific-Subject-lines.kql), [Specific sender and recipients](../Microsoft%20Defender%20for%20Office%20365/Specific-sender-and-recipients.kql) | `EmailEvents`, `EmailAttachmentInfo` | Sentinel (Defender XDR connector, `TimeGenerated`) or Defender XDR Advanced Hunting (replace `TimeGenerated` with `Timestamp`). |
+| Microsoft Teams | [Join/Leave times](../Microsoft%20Teams/Join-Leave-times.kql), [Meeting Duration](../Microsoft%20Teams/Meeting-Duration.kql), [SharedActivities](../Microsoft%20Teams/SharedActivities.kql) | Defender XDR `CallActivityEvents` | Defender XDR Advanced Hunting only. The table is not available in Sentinel / Log Analytics and has no Sentinel connector. |
+| SharePoint | [Site/Page accessed/created/modified](../SharePoint/Site-Page-accessed-created-modified.kql), [Files uploaded/downloaded](../SharePoint/Files-uploaded-downloaded-from-a-SharePoint-site.kql) | Sentinel `OfficeActivity` | Sentinel / Log Analytics workspace logs |
+| OneDrive | [User File activity](../OneDrive/User-File-activity.kql), [Sync activity](../OneDrive/Sync-activity.kql) | Sentinel `OfficeActivity` | Sentinel / Log Analytics workspace logs |
 
 SharePoint and OneDrive require the Microsoft 365 (Office 365) Sentinel connector with the SharePoint feed enabled, and Microsoft Purview Audit turned on. OneDrive personal-site records can arrive under either the `OneDrive` or `SharePoint` workload; the queries classify them by workload and by personal-site URL. Teams audit collection in this connector is not used.
 
 ## Parameters
 
-Edit the `let` values at the top of each query. All nonempty values are combined with AND; empty values are ignored.
+Edit the `let` values at the top of each query. Every query returns all rows by default; fill a list only to narrow the result. All nonempty values are combined with AND; empty values are ignored. Each `let` has an `// Example:` comment next to it.
 
 | Parameter | Queries | Meaning |
 |---|---|---|
 | `StartTime`, `EndTime` | All | Event time window. Default `ago(30d)` to `now()`. |
-| `TargetUser` | All | Teams: exact UPN (case-insensitive). SharePoint/OneDrive: exact `UserId` (case-insensitive), or a substring of raw `Actor` when that field is populated. |
-| `TargetCallId` | Teams | Exact `CallId`. |
+| `TargetUsers` | Email (external communications, subject lines, attachments), Teams | Array of addresses or UPNs (case-insensitive exact match). Email: visible sender, envelope sender or recipient (attachments: sender or recipient). Teams: the user in `ActivityInitiatorUpn` / `OriginatorUpn`. |
+| `TargetDirections` | Email (external communications) | `["Inbound"]`, `["Outbound"]`; empty = both. |
+| `TargetSenders`, `TargetRecipients` | Email (sender and recipients) | Arrays of addresses; senders match the visible or envelope sender. |
+| `TargetSubjects` | Email (subject lines) | Array of words or phrases; whole-word match, case-insensitive. |
+| `TargetFileNames`, `TargetSHA256` | Email (attachments) | Filename words (whole-word, case-insensitive) and SHA-256 hashes. |
+| `TargetUser` | SharePoint, OneDrive | Exact `UserId` (case-insensitive), or a substring of raw `Actor` when that field is populated. |
+| `TargetCallIds`, `TargetActivityTypes` | Teams | Arrays of exact `CallId` values and `ActivityType` values (`JoinCall`, `LeaveCall`, `StartShare`, `StopShare`). |
 | `TargetOperation` | SharePoint files, OneDrive | Exact operation from the query's allowlist. |
 | `TargetSite` | SharePoint, OneDrive | Case-insensitive substring of `Site_Url` or `OfficeObjectId`. |
 | `TargetFileName` | SharePoint, OneDrive | Exact source or destination file name (case-insensitive). |
-| `MaxRows` | Teams | Row cap, at most 1000. SharePoint and OneDrive queries return the latest 1000 rows. |
+| Row cap | All | Email, Teams, SharePoint and OneDrive queries return the latest 1000 rows. |
 
 A capped result can omit evidence. Narrow the time window rather than treating a capped result as complete.
 
@@ -34,13 +40,17 @@ Each query was run against live tenant data after real actions were performed, t
 
 | Product | Query | Live evidence used | Result |
 |---|---|---|---|
-| Teams | Join/Leave times | Real Teams call, JoinCall/LeaveCall | Validated |
-| Teams | Meeting Duration | Real Teams call, first join to last leave per user | Validated |
-| Teams | SharedActivities | StartShare/StopShare events | Validated for screen sharing |
-| SharePoint | Site/Page accessed/created/modified | Created, published, viewed and modified an `.aspx` page | Validated |
-| SharePoint | Files uploaded/downloaded | Browser upload/download of unique test files | Validated |
-| OneDrive | User File activity | Upload, download, copy, rename, recycle of unique test files | Validated |
-| OneDrive | Sync activity | Signed-in OneDrive.exe client: 4 `FileSyncUploadedFull` records | Validated for upload |
+| Email | [External communications](../Microsoft%20Defender%20for%20Office%20365/External-communications.kql) | Live `EmailEvents`; row counts matched an independent raw-table count (default, user, direction) | Validated |
+| Email | [Specific sender and recipients](../Microsoft%20Defender%20for%20Office%20365/Specific-sender-and-recipients.kql) | Live `EmailEvents`; default, sender and recipient filters | Validated |
+| Email | [Specific Subject lines](../Microsoft%20Defender%20for%20Office%20365/Specific-Subject-lines.kql) | Live `EmailEvents`; default, subject and subject + user filters | Validated |
+| Email | [Specific attachment filenames and hashes](../Microsoft%20Defender%20for%20Office%20365/Specific-attachment-filenames-and-hashes.kql) | Live `EmailAttachmentInfo`; default, filename, SHA-256, user and non-matching filters | Validated |
+| Teams | [Join/Leave times](../Microsoft%20Teams/Join-Leave-times.kql) | Real Teams call, JoinCall/LeaveCall | Validated |
+| Teams | [Meeting Duration](../Microsoft%20Teams/Meeting-Duration.kql) | Real Teams call, first join to last leave per user | Validated |
+| Teams | [SharedActivities](../Microsoft%20Teams/SharedActivities.kql) | StartShare/StopShare events | Validated for screen sharing |
+| SharePoint | [Site/Page accessed/created/modified](../SharePoint/Site-Page-accessed-created-modified.kql) | Created, published, viewed and modified an `.aspx` page | Validated |
+| SharePoint | [Files uploaded/downloaded](../SharePoint/Files-uploaded-downloaded-from-a-SharePoint-site.kql) | Browser upload/download of unique test files | Validated |
+| OneDrive | [User File activity](../OneDrive/User-File-activity.kql) | Upload, download, copy, rename, recycle of unique test files | Validated |
+| OneDrive | [Sync activity](../OneDrive/Sync-activity.kql) | Signed-in OneDrive.exe client: 4 `FileSyncUploadedFull` records | Validated for upload |
 
 ## Known limits
 

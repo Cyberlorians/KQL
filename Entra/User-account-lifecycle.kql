@@ -1,0 +1,42 @@
+// Entra User Account Lifecycle
+// Objective: Shows when user accounts are created, invited, redeemed, disabled, enabled, deleted, or restored in Entra ID, who or what did it, and the account affected.
+// Use it for joiner, mover, and leaver reviews and to spot accounts created or removed outside your normal process.
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+// Source: AuditLogs (Entra audit log, category UserManagement).
+// Operations covered: Add user, Invite external user, Redeem external user invite, Delete user, Hard Delete user, Restore user, Delete external user, Disable account, Enable account.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all accounts, all initiators, all lifecycle operations, successes and failures).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["jdoe@contoso.com", "8c03c3b9-d1fe-48ad-9304-def65e1d3427", "John Doe"] (matches the account UPN, object ID, or display name)
+let TargetInitiators = dynamic([]);     // Example: ["admin@contoso.com", "Microsoft B2B Admin Worker"] (matches the initiating user UPN or application name)
+let TargetOperations = dynamic([]);     // Example: ["Delete user", "Hard Delete user"] (empty = all lifecycle operations)
+//
+// ----- Part 1: Filter lifecycle operations -----
+//
+AuditLogs
+| where TimeGenerated between (StartTime .. EndTime)
+| where OperationName in~ ("Add user", "Invite external user", "Redeem external user invite", "Delete user", "Hard Delete user",
+    "Restore user", "Delete external user", "Disable account", "Enable account")
+| where (array_length(TargetOperations) == 0 or OperationName in~ (TargetOperations))
+//
+// ----- Part 2: Read the initiator and the affected account -----
+//
+| extend Initiator = todynamic(InitiatedBy), Target = todynamic(TargetResources)[0]
+| extend InitiatorUser = tostring(Initiator.user.userPrincipalName), InitiatorApp = tostring(Initiator.app.displayName),
+    InitiatorIP = tostring(Initiator.user.ipAddress), InitiatorId = tostring(Initiator.user.id),
+    TargetUserPrincipalName = tostring(Target.userPrincipalName), TargetUserDisplayName = tostring(Target.displayName),
+    TargetUserId = tostring(Target.id)
+| where (array_length(TargetUsers) == 0 or TargetUserPrincipalName in~ (TargetUsers) or TargetUserId in~ (TargetUsers) or TargetUserDisplayName in~ (TargetUsers))
+| where (array_length(TargetInitiators) == 0 or InitiatorUser in~ (TargetInitiators) or InitiatorApp in~ (TargetInitiators))
+//
+// ----- Part 3: Output -----
+//
+| project TimeGenerated, Event = OperationName, Result, TargetUserPrincipalName, TargetUserDisplayName, TargetUserId,
+    InitiatorType = case(isnotempty(InitiatorUser), "User", isnotempty(InitiatorApp), "Application", "Unknown"),
+    Initiator = iff(isnotempty(InitiatorUser), InitiatorUser, InitiatorApp), InitiatorIP,
+    ActedOnOwnAccount = isnotempty(InitiatorId) and InitiatorId == TargetUserId,
+    ResultReason, LoggedByService, CorrelationId
+| top 1000 by TimeGenerated desc

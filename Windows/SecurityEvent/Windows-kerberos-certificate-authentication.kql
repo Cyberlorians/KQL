@@ -1,0 +1,52 @@
+// Windows Kerberos Certificate (PKINIT) Authentication
+// Objective: Shows Kerberos ticket requests that were made with a certificate (smart card, PIV/CAC, or other PKINIT logons) on domain controllers, with the
+// account, the certificate issuer, serial number and thumbprint, the source IP, and a readable result. Use it to see who authenticates with a certificate and which certificate.
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+// Source: SecurityEvent (Windows Security log on domain controllers).
+// Event ID: 4768 Kerberos TGT requested. Only requests that carry certificate details are returned; password logons have empty certificate fields and are not shown.
+// Audit policy: Account Logon > Audit Kerberos Authentication Service (Success, Failure).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all accounts, all domain controllers, all certificates, successes and failures).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["jdoe", "jdoe@contoso.com", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+let TargetComputers = dynamic([]);      // Example: ["dc01"] (the domain controller that handled the request; case-insensitive whole-word match)
+let TargetCertIssuers = dynamic([]);    // Example: ["Contoso Issuing CA"] (case-insensitive whole-word match on the issuer name)
+let TargetCertThumbprints = dynamic([]); // Example: ["A1B2C3D4E5F60718293A4B5C6D7E8F9012345678"]
+let TargetStatusCodes = dynamic([]);    // Example: ["0x0", "0x10"] (Kerberos status codes; empty = all, success included)
+let ExcludeMachineAccounts = false;     // Set to true to hide computer accounts (names ending in $)
+//
+// ----- Part 1: Filter 4768 events and read the certificate fields -----
+//
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID == 4768
+| where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+| where (array_length(TargetStatusCodes) == 0 or Status in~ (TargetStatusCodes))
+| where (array_length(TargetUsers) == 0 or TargetUserName in~ (TargetUsers)
+    or strcat(TargetDomainName, "\\", TargetUserName) in~ (TargetUsers) or TargetSid in~ (TargetUsers))
+| where ExcludeMachineAccounts == false or TargetUserName !endswith "$"
+| extend CertIssuer = extract(@'Name="CertIssuerName">([^<]+)<', 1, EventData),
+    CertSerialNumber = extract(@'Name="CertSerialNumber">([^<]+)<', 1, EventData),
+    CertThumbprint = extract(@'Name="CertThumbprint">([^<]+)<', 1, EventData),
+    PreAuthType = extract(@'Name="PreAuthType">([^<]+)<', 1, EventData)
+| where isnotempty(CertIssuer) or isnotempty(CertSerialNumber) or isnotempty(CertThumbprint)
+| where (array_length(TargetCertIssuers) == 0 or CertIssuer has_any (TargetCertIssuers))
+| where (array_length(TargetCertThumbprints) == 0 or CertThumbprint in~ (TargetCertThumbprints))
+//
+// ----- Part 2: Output -----
+//
+| extend SourceIP = replace_string(IpAddress, "::ffff:", ""),
+    ResultText = case(
+        tolower(Status) == "0x0", "Success",
+        tolower(Status) == "0x6", "Kerberos: client not found in database (unknown user)",
+        tolower(Status) == "0x10", "Kerberos: no support for this pre-authentication type (certificate not accepted or not found)",
+        tolower(Status) == "0x12", "Kerberos: account disabled, expired, locked out, or logon hours restricted",
+        tolower(Status) == "0x18", "Kerberos: pre-authentication failed",
+        tolower(Status) == "0x25", "Kerberos: clock skew too great",
+        strcat("Status ", Status))
+| project TimeGenerated, UserName = TargetUserName, UserDomain = TargetDomainName, ResultText, Status, Computer, SourceIP,
+    CertIssuer, CertSerialNumber, CertThumbprint, PreAuthType, ServiceName, UserSid = TargetSid
+| top 1000 by TimeGenerated desc

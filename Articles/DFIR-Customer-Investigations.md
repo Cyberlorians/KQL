@@ -938,4 +938,189 @@ Results are observed events, not complete mailbox or file contents.
 > ```
 > </details>
 
+> <details>
+> <summary>✅ <strong>Windows Kerberos certificate (PKINIT) authentication</strong></summary>
+>
+> Query file: [Windows/SecurityEvent/Windows-kerberos-certificate-authentication.kql](../Windows/SecurityEvent/Windows-kerberos-certificate-authentication.kql).
+>
+> ```kql
+> // Windows Kerberos Certificate (PKINIT) Authentication
+> // Objective: Shows Kerberos ticket requests that were made with a certificate (smart card, PIV/CAC, or other PKINIT logons) on domain controllers, with the
+> // account, the certificate issuer, serial number and thumbprint, the source IP, and a readable result. Use it to see who authenticates with a certificate and which certificate.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: SecurityEvent (Windows Security log on domain controllers).
+> // Event ID: 4768 Kerberos TGT requested. Only requests that carry certificate details are returned; password logons have empty certificate fields and are not shown.
+> // Audit policy: Account Logon > Audit Kerberos Authentication Service (Success, Failure).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all domain controllers, all certificates, successes and failures).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "jdoe@contoso.com", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetComputers = dynamic([]);      // Example: ["dc01"] (the domain controller that handled the request; case-insensitive whole-word match)
+> let TargetCertIssuers = dynamic([]);    // Example: ["Contoso Issuing CA"] (case-insensitive whole-word match on the issuer name)
+> let TargetCertThumbprints = dynamic([]); // Example: ["A1B2C3D4E5F60718293A4B5C6D7E8F9012345678"]
+> let TargetStatusCodes = dynamic([]);    // Example: ["0x0", "0x10"] (Kerberos status codes; empty = all, success included)
+> let ExcludeMachineAccounts = false;     // Set to true to hide computer accounts (names ending in $)
+> //
+> // ----- Part 1: Filter 4768 events and read the certificate fields -----
+> //
+> SecurityEvent
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where EventID == 4768
+> | where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+> | where (array_length(TargetStatusCodes) == 0 or Status in~ (TargetStatusCodes))
+> | where (array_length(TargetUsers) == 0 or TargetUserName in~ (TargetUsers)
+>     or strcat(TargetDomainName, "\\", TargetUserName) in~ (TargetUsers) or TargetSid in~ (TargetUsers))
+> | where ExcludeMachineAccounts == false or TargetUserName !endswith "$"
+> | extend CertIssuer = extract(@'Name="CertIssuerName">([^<]+)<', 1, EventData),
+>     CertSerialNumber = extract(@'Name="CertSerialNumber">([^<]+)<', 1, EventData),
+>     CertThumbprint = extract(@'Name="CertThumbprint">([^<]+)<', 1, EventData),
+>     PreAuthType = extract(@'Name="PreAuthType">([^<]+)<', 1, EventData)
+> | where isnotempty(CertIssuer) or isnotempty(CertSerialNumber) or isnotempty(CertThumbprint)
+> | where (array_length(TargetCertIssuers) == 0 or CertIssuer has_any (TargetCertIssuers))
+> | where (array_length(TargetCertThumbprints) == 0 or CertThumbprint in~ (TargetCertThumbprints))
+> //
+> // ----- Part 2: Output -----
+> //
+> | extend SourceIP = replace_string(IpAddress, "::ffff:", ""),
+>     ResultText = case(
+>         tolower(Status) == "0x0", "Success",
+>         tolower(Status) == "0x6", "Kerberos: client not found in database (unknown user)",
+>         tolower(Status) == "0x10", "Kerberos: no support for this pre-authentication type (certificate not accepted or not found)",
+>         tolower(Status) == "0x12", "Kerberos: account disabled, expired, locked out, or logon hours restricted",
+>         tolower(Status) == "0x18", "Kerberos: pre-authentication failed",
+>         tolower(Status) == "0x25", "Kerberos: clock skew too great",
+>         strcat("Status ", Status))
+> | project TimeGenerated, UserName = TargetUserName, UserDomain = TargetDomainName, ResultText, Status, Computer, SourceIP,
+>     CertIssuer, CertSerialNumber, CertThumbprint, PreAuthType, ServiceName, UserSid = TargetSid
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+</details>
+
+<details>
+<summary><strong>Account and Credential Management</strong></summary>
+
+> <details>
+> <summary>✅ <strong>Entra user account lifecycle</strong></summary>
+>
+> Query file: [Entra/User-account-lifecycle.kql](../Entra/User-account-lifecycle.kql).
+>
+> ```kql
+> // Entra User Account Lifecycle
+> // Objective: Shows when user accounts are created, invited, redeemed, disabled, enabled, deleted, or restored in Entra ID, who or what did it, and the account affected.
+> // Use it for joiner, mover, and leaver reviews and to spot accounts created or removed outside your normal process.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: AuditLogs (Entra audit log, category UserManagement).
+> // Operations covered: Add user, Invite external user, Redeem external user invite, Delete user, Hard Delete user, Restore user, Delete external user, Disable account, Enable account.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all initiators, all lifecycle operations, successes and failures).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe@contoso.com", "8c03c3b9-d1fe-48ad-9304-def65e1d3427", "John Doe"] (matches the account UPN, object ID, or display name)
+> let TargetInitiators = dynamic([]);     // Example: ["admin@contoso.com", "Microsoft B2B Admin Worker"] (matches the initiating user UPN or application name)
+> let TargetOperations = dynamic([]);     // Example: ["Delete user", "Hard Delete user"] (empty = all lifecycle operations)
+> //
+> // ----- Part 1: Filter lifecycle operations -----
+> //
+> AuditLogs
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where OperationName in~ ("Add user", "Invite external user", "Redeem external user invite", "Delete user", "Hard Delete user",
+>     "Restore user", "Delete external user", "Disable account", "Enable account")
+> | where (array_length(TargetOperations) == 0 or OperationName in~ (TargetOperations))
+> //
+> // ----- Part 2: Read the initiator and the affected account -----
+> //
+> | extend Initiator = todynamic(InitiatedBy), Target = todynamic(TargetResources)[0]
+> | extend InitiatorUser = tostring(Initiator.user.userPrincipalName), InitiatorApp = tostring(Initiator.app.displayName),
+>     InitiatorIP = tostring(Initiator.user.ipAddress), InitiatorId = tostring(Initiator.user.id),
+>     TargetUserPrincipalName = tostring(Target.userPrincipalName), TargetUserDisplayName = tostring(Target.displayName),
+>     TargetUserId = tostring(Target.id)
+> | where (array_length(TargetUsers) == 0 or TargetUserPrincipalName in~ (TargetUsers) or TargetUserId in~ (TargetUsers) or TargetUserDisplayName in~ (TargetUsers))
+> | where (array_length(TargetInitiators) == 0 or InitiatorUser in~ (TargetInitiators) or InitiatorApp in~ (TargetInitiators))
+> //
+> // ----- Part 3: Output -----
+> //
+> | project TimeGenerated, Event = OperationName, Result, TargetUserPrincipalName, TargetUserDisplayName, TargetUserId,
+>     InitiatorType = case(isnotempty(InitiatorUser), "User", isnotempty(InitiatorApp), "Application", "Unknown"),
+>     Initiator = iff(isnotempty(InitiatorUser), InitiatorUser, InitiatorApp), InitiatorIP,
+>     ActedOnOwnAccount = isnotempty(InitiatorId) and InitiatorId == TargetUserId,
+>     ResultReason, LoggedByService, CorrelationId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Entra password and authentication method changes</strong></summary>
+>
+> Query file: [Entra/Password-and-authentication-method-changes.kql](../Entra/Password-and-authentication-method-changes.kql).
+>
+> ```kql
+> // Entra Password and Authentication Method Changes
+> // Objective: Shows password changes and resets, and authentication method changes (MFA and security info, passkeys, Windows Hello for Business, passwordless phone sign-in, per-user MFA state,
+> // session revocation) in Entra ID, with the account affected, who or what made the change, and whether the user changed their own credential.
+> // Use it to review credential management for privileged and standard users and to spot admin-driven resets or removed MFA methods.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: AuditLogs (Entra audit log, category UserManagement).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all initiators, all credential operations, successes and failures).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe@contoso.com", "8c03c3b9-d1fe-48ad-9304-def65e1d3427", "John Doe"] (matches the account UPN, object ID, or display name)
+> let TargetInitiators = dynamic([]);     // Example: ["admin@contoso.com", "Microsoft password reset service"] (matches the initiating user UPN or application name)
+> let TargetOperations = dynamic([]);     // Example: ["Admin deleted security info", "Reset password (by admin)"] (empty = all credential operations)
+> let TargetCredentialTypes = dynamic([]); // Example: ["Password", "MFA and security info"] (Password, MFA and security info, Passwordless, Session)
+> //
+> // ----- Part 1: Filter credential operations -----
+> //
+> AuditLogs
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where Category == "UserManagement"
+> | extend CredentialType = case(
+>     OperationName in~ ("Change user password", "Reset user password", "Reset password", "Reset password (by admin)", "Reset password (self-service)",
+>         "Change password (self-service)", "Update PasswordProfile", "Set force change user password", "Admin started password reset",
+>         "User started password change", "User started password reset", "Self-service password reset flow activity progress",
+>         "Unlock user account (self-service)", "Blocked from self-service password reset", "Security info saved for self-service password reset",
+>         "Create application password for user", "Delete application password for user"), "Password",
+>     OperationName in~ ("User registered security info", "User registered all required security info", "User started security info registration",
+>         "User deleted security info", "User updated security info", "User changed default security info", "User reviewed security info",
+>         "User canceled security info registration", "Admin registered security info", "Admin deleted security info", "Admin updated security info",
+>         "Enable Strong Authentication", "Disable Strong Authentication", "Update per-user multifactor authentication state"), "MFA and security info",
+>     OperationName in~ ("Add passwordless phone sign-in credential", "Delete passwordless phone sign-in credential", "Add Windows Hello for Business credential",
+>         "Delete Windows Hello for Business credential", "Add Passkey (device-bound)", "Delete Passkey (device-bound)", "Add platform credential",
+>         "Delete platform credential"), "Passwordless",
+>     OperationName =~ "Update StsRefreshTokenValidFrom Timestamp", "Session",
+>     "")
+> | where isnotempty(CredentialType)
+> | where (array_length(TargetOperations) == 0 or OperationName in~ (TargetOperations))
+> | where (array_length(TargetCredentialTypes) == 0 or CredentialType in~ (TargetCredentialTypes))
+> //
+> // ----- Part 2: Read the initiator and the affected account -----
+> //
+> | extend Initiator = todynamic(InitiatedBy), Target = todynamic(TargetResources)[0]
+> | extend InitiatorUser = tostring(Initiator.user.userPrincipalName), InitiatorApp = tostring(Initiator.app.displayName),
+>     InitiatorIP = tostring(Initiator.user.ipAddress), InitiatorId = tostring(Initiator.user.id),
+>     TargetUserPrincipalName = tostring(Target.userPrincipalName), TargetUserDisplayName = tostring(Target.displayName),
+>     TargetUserId = tostring(Target.id)
+> | where (array_length(TargetUsers) == 0 or TargetUserPrincipalName in~ (TargetUsers) or TargetUserId in~ (TargetUsers) or TargetUserDisplayName in~ (TargetUsers))
+> | where (array_length(TargetInitiators) == 0 or InitiatorUser in~ (TargetInitiators) or InitiatorApp in~ (TargetInitiators))
+> //
+> // ----- Part 3: Output -----
+> //
+> | project TimeGenerated, CredentialType, Event = OperationName, Result, TargetUserPrincipalName, TargetUserDisplayName, TargetUserId,
+>     InitiatorType = case(isnotempty(InitiatorUser), "User", isnotempty(InitiatorApp), "Application", "Unknown"),
+>     Initiator = iff(isnotempty(InitiatorUser), InitiatorUser, InitiatorApp), InitiatorIP,
+>     ChangedOwnCredential = isnotempty(InitiatorId) and InitiatorId == TargetUserId,
+>     ResultReason, LoggedByService, CorrelationId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
 </details>

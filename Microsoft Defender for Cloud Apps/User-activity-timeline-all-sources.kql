@@ -1,0 +1,77 @@
+// User Activity Event Timeline > Everything a user did, all sources in one timeline
+// Objective: One chronological list (newest first) of a user's activity across cloud apps (Exchange, SharePoint, OneDrive, Teams, others), Entra sign-ins,
+// Entra directory changes, Azure resource actions, device logons and Teams calls. Each row says which source it came from, what happened, to what, the result and the IP.
+// Written for the unified Defender portal (Sentinel + XDR). CloudAppEvents and CallActivityEvents are XDR tables, so this does not run in Sentinel / Log Analytics alone.
+// Use the single-source queries (Cloud apps, Azure, Entra audit, sign-in, device logon, Teams) when you need every column from one source.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all users from all sources (newest 1000 rows).
+//
+let StartTime = ago(7d);                // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user"] (UPN for most sources; account name or DOMAIN\name for device logons; display name or object ID also match cloud apps)
+let TargetSources = dynamic([]);        // Example: ["Cloud apps", "Entra sign-in"] (Cloud apps, Entra sign-in, Entra audit, Azure activity, Device logon, Teams call)
+//
+// ----- Part 1: Gather each source into the same columns -----
+//
+union
+(
+    CloudAppEvents
+    | where (array_length(TargetSources) == 0 or "Cloud apps" in~ (TargetSources))
+    | where TimeGenerated between (StartTime .. EndTime)
+    | extend UserId = tostring(RawEventData.UserId)
+    | where (array_length(TargetUsers) == 0 or UserId in~ (TargetUsers) or AccountDisplayName in~ (TargetUsers)
+        or AccountId in~ (TargetUsers) or AccountObjectId in~ (TargetUsers))
+    | project TimeGenerated, Source = "Cloud apps", User = iff(UserId has "@", UserId, coalesce(AccountDisplayName, AccountId)),
+        Activity = ActionType, Object = coalesce(ObjectName, Application), Result = "", IPAddress,
+        Details = strcat(Application, iff(isnotempty(CountryCode), strcat(" | ", CountryCode), "")), EventId = tostring(ReportId)
+),
+(
+    SigninLogs
+    | where (array_length(TargetSources) == 0 or "Entra sign-in" in~ (TargetSources))
+    | where TimeGenerated between (StartTime .. EndTime)
+    | where (array_length(TargetUsers) == 0 or UserPrincipalName in~ (TargetUsers))
+    | project TimeGenerated, Source = "Entra sign-in", User = UserPrincipalName, Activity = "Interactive sign-in", Object = AppDisplayName,
+        Result = iff(ResultType == "0", "Success", "Failure"), IPAddress, Details = ResultDescription, EventId = tostring(CorrelationId)
+),
+(
+    AuditLogs
+    | where (array_length(TargetSources) == 0 or "Entra audit" in~ (TargetSources))
+    | where TimeGenerated between (StartTime .. EndTime)
+    | extend InitiatedByUser = tostring(InitiatedBy.user.userPrincipalName)
+    | where (array_length(TargetUsers) == 0 or InitiatedByUser in~ (TargetUsers))
+    | project TimeGenerated, Source = "Entra audit", User = InitiatedByUser, Activity = OperationName,
+        Object = tostring(TargetResources[0].displayName), Result, IPAddress = tostring(InitiatedBy.user.ipAddress),
+        Details = Category, EventId = tostring(CorrelationId)
+),
+(
+    AzureActivity
+    | where (array_length(TargetSources) == 0 or "Azure activity" in~ (TargetSources))
+    | where TimeGenerated between (StartTime .. EndTime)
+    | where (array_length(TargetUsers) == 0 or Caller in~ (TargetUsers))
+    | project TimeGenerated, Source = "Azure activity", User = Caller, Activity = OperationNameValue, Object = ResourceGroup,
+        Result = ActivityStatusValue, IPAddress = CallerIpAddress, Details = CategoryValue, EventId = tostring(CorrelationId)
+),
+(
+    DeviceLogonEvents
+    | where (array_length(TargetSources) == 0 or "Device logon" in~ (TargetSources))
+    | where TimeGenerated between (StartTime .. EndTime)
+    | where (array_length(TargetUsers) == 0 or AccountName in~ (TargetUsers)
+        or strcat(AccountDomain, "\\", AccountName) in~ (TargetUsers) or AccountSid in~ (TargetUsers))
+    | project TimeGenerated, Source = "Device logon", User = strcat(AccountDomain, "\\", AccountName), Activity = strcat(ActionType, " ", LogonType),
+        Object = DeviceName, Result = iff(ActionType == "LogonFailed", "Failure", iff(ActionType in ("LogonSuccess", "LogonSuccessAggregatedReport"), "Success", ActionType)),
+        IPAddress = RemoteIP, Details = Protocol, EventId = tostring(ReportId)
+),
+(
+    CallActivityEvents
+    | where (array_length(TargetSources) == 0 or "Teams call" in~ (TargetSources))
+    | where ActivityTimestamp between (StartTime .. EndTime)
+    | where (array_length(TargetUsers) == 0 or ActivityInitiatorUpn in~ (TargetUsers))
+    | project TimeGenerated = ActivityTimestamp, Source = "Teams call", User = ActivityInitiatorUpn, Activity = ActivityType,
+        Object = CallSchedulingType, Result = "", IPAddress = "", Details = CallId, EventId = tostring(ActivityId)
+)
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, Source, User, Activity, Object, Result, IPAddress, Details, EventId
+| top 1000 by TimeGenerated desc

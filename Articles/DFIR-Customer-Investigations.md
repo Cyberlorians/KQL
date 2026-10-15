@@ -1882,7 +1882,218 @@ Results are observed events, not complete mailbox or file contents.
 <details>
 <summary><strong>User Activity Event Timeline</strong></summary>
 
-No queries added yet.
+> <details>
+> <summary>✅ <strong>All sources user timeline</strong></summary>
+>
+> Query file: [Microsoft Defender for Cloud Apps/User-activity-timeline-all-sources.kql](../Microsoft%20Defender%20for%20Cloud%20Apps/User-activity-timeline-all-sources.kql).
+>
+> ```kql
+> // User Activity Event Timeline > Everything a user did, all sources in one timeline
+> // Objective: One chronological list (newest first) of a user's activity across cloud apps (Exchange, SharePoint, OneDrive, Teams, others), Entra sign-ins,
+> // Entra directory changes, Azure resource actions, device logons and Teams calls. Each row says which source it came from, what happened, to what, the result and the IP.
+> // Written for the unified Defender portal (Sentinel + XDR). CloudAppEvents and CallActivityEvents are XDR tables, so this does not run in Sentinel / Log Analytics alone.
+> // Use the single-source queries (Cloud apps, Azure, Entra audit, sign-in, device logon, Teams) when you need every column from one source.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all users from all sources (newest 1000 rows).
+> //
+> let StartTime = ago(7d);                // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "user"] (UPN for most sources; account name or DOMAIN\name for device logons; display name or object ID also match cloud apps)
+> let TargetSources = dynamic([]);        // Example: ["Cloud apps", "Entra sign-in"] (Cloud apps, Entra sign-in, Entra audit, Azure activity, Device logon, Teams call)
+> //
+> // ----- Part 1: Gather each source into the same columns -----
+> //
+> union
+> (
+>     CloudAppEvents
+>     | where (array_length(TargetSources) == 0 or "Cloud apps" in~ (TargetSources))
+>     | where TimeGenerated between (StartTime .. EndTime)
+>     | extend UserId = tostring(RawEventData.UserId)
+>     | where (array_length(TargetUsers) == 0 or UserId in~ (TargetUsers) or AccountDisplayName in~ (TargetUsers)
+>         or AccountId in~ (TargetUsers) or AccountObjectId in~ (TargetUsers))
+>     | project TimeGenerated, Source = "Cloud apps", User = iff(UserId has "@", UserId, coalesce(AccountDisplayName, AccountId)),
+>         Activity = ActionType, Object = coalesce(ObjectName, Application), Result = "", IPAddress,
+>         Details = strcat(Application, iff(isnotempty(CountryCode), strcat(" | ", CountryCode), "")), EventId = tostring(ReportId)
+> ),
+> (
+>     SigninLogs
+>     | where (array_length(TargetSources) == 0 or "Entra sign-in" in~ (TargetSources))
+>     | where TimeGenerated between (StartTime .. EndTime)
+>     | where (array_length(TargetUsers) == 0 or UserPrincipalName in~ (TargetUsers))
+>     | project TimeGenerated, Source = "Entra sign-in", User = UserPrincipalName, Activity = "Interactive sign-in", Object = AppDisplayName,
+>         Result = iff(ResultType == "0", "Success", "Failure"), IPAddress, Details = ResultDescription, EventId = tostring(CorrelationId)
+> ),
+> (
+>     AuditLogs
+>     | where (array_length(TargetSources) == 0 or "Entra audit" in~ (TargetSources))
+>     | where TimeGenerated between (StartTime .. EndTime)
+>     | extend InitiatedByUser = tostring(InitiatedBy.user.userPrincipalName)
+>     | where (array_length(TargetUsers) == 0 or InitiatedByUser in~ (TargetUsers))
+>     | project TimeGenerated, Source = "Entra audit", User = InitiatedByUser, Activity = OperationName,
+>         Object = tostring(TargetResources[0].displayName), Result, IPAddress = tostring(InitiatedBy.user.ipAddress),
+>         Details = Category, EventId = tostring(CorrelationId)
+> ),
+> (
+>     AzureActivity
+>     | where (array_length(TargetSources) == 0 or "Azure activity" in~ (TargetSources))
+>     | where TimeGenerated between (StartTime .. EndTime)
+>     | where (array_length(TargetUsers) == 0 or Caller in~ (TargetUsers))
+>     | project TimeGenerated, Source = "Azure activity", User = Caller, Activity = OperationNameValue, Object = ResourceGroup,
+>         Result = ActivityStatusValue, IPAddress = CallerIpAddress, Details = CategoryValue, EventId = tostring(CorrelationId)
+> ),
+> (
+>     DeviceLogonEvents
+>     | where (array_length(TargetSources) == 0 or "Device logon" in~ (TargetSources))
+>     | where TimeGenerated between (StartTime .. EndTime)
+>     | where (array_length(TargetUsers) == 0 or AccountName in~ (TargetUsers)
+>         or strcat(AccountDomain, "\\", AccountName) in~ (TargetUsers) or AccountSid in~ (TargetUsers))
+>     | project TimeGenerated, Source = "Device logon", User = strcat(AccountDomain, "\\", AccountName), Activity = strcat(ActionType, " ", LogonType),
+>         Object = DeviceName, Result = iff(ActionType == "LogonFailed", "Failure", iff(ActionType in ("LogonSuccess", "LogonSuccessAggregatedReport"), "Success", ActionType)),
+>         IPAddress = RemoteIP, Details = Protocol, EventId = tostring(ReportId)
+> ),
+> (
+>     CallActivityEvents
+>     | where (array_length(TargetSources) == 0 or "Teams call" in~ (TargetSources))
+>     | where ActivityTimestamp between (StartTime .. EndTime)
+>     | where (array_length(TargetUsers) == 0 or ActivityInitiatorUpn in~ (TargetUsers))
+>     | project TimeGenerated = ActivityTimestamp, Source = "Teams call", User = ActivityInitiatorUpn, Activity = ActivityType,
+>         Object = CallSchedulingType, Result = "", IPAddress = "", Details = CallId, EventId = tostring(ActivityId)
+> )
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, Source, User, Activity, Object, Result, IPAddress, Details, EventId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Cloud app and Microsoft 365 activity</strong></summary>
+>
+> Query file: [Microsoft Defender for Cloud Apps/User-activity-events.kql](../Microsoft%20Defender%20for%20Cloud%20Apps/User-activity-events.kql).
+>
+> ```kql
+> // User Activity Event Timeline > Cloud app and Microsoft 365 activity
+> // Objective: Shows what a user did across connected cloud apps (Exchange Online, SharePoint, OneDrive, Teams, Azure, Entra and others),
+> // with the action, object, source IP, location, device type and user agent. Raw events, newest first.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: CloudAppEvents (Microsoft Defender for Cloud Apps). UserId is the UPN for Microsoft 365 workloads and can be a GUID or service name for others (for example Azure).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, all applications, all actions).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "Jane Doe", "11111111-2222-3333-4444-555555555555"] (matches UPN, display name, account ID or object ID)
+> let TargetApplications = dynamic([]);   // Example: ["Microsoft Exchange Online", "Microsoft Teams"]
+> let TargetActionTypes = dynamic([]);    // Example: ["FileDeleted", "Send", "UserLoggedIn"]
+> let TargetIPAddresses = dynamic([]);    // Example: ["203.0.113.10"]
+> //
+> // ----- Part 1: Filter cloud app activity -----
+> //
+> CloudAppEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | extend UserId = tostring(RawEventData.UserId)
+> | where (array_length(TargetUsers) == 0 or UserId in~ (TargetUsers) or AccountDisplayName in~ (TargetUsers)
+>     or AccountId in~ (TargetUsers) or AccountObjectId in~ (TargetUsers))
+> | where (array_length(TargetApplications) == 0 or Application in~ (TargetApplications))
+> | where (array_length(TargetActionTypes) == 0 or ActionType in~ (TargetActionTypes))
+> | where (array_length(TargetIPAddresses) == 0 or IPAddress in (TargetIPAddresses))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, UserId, AccountDisplayName, Application, ActionType, ActivityType, ObjectName, ObjectType,
+>     IPAddress, CountryCode, City, IsAdminOperation, IsExternalUser, IsImpersonated, DeviceType, OSPlatform,
+>     UserAgent, AccountId, AccountObjectId, ReportId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Azure resource activity</strong></summary>
+>
+> Query file: [Azure/Azure-activity-by-user.kql](../Azure/Azure-activity-by-user.kql).
+>
+> ```kql
+> // User Activity Event Timeline > Azure resource activity
+> // Objective: Shows the Azure control-plane actions (create, update, delete, role and policy changes) performed by a user or service principal,
+> // with the operation, result, resource, subscription and caller IP. Raw events, newest first.
+> // Source: AzureActivity (Azure Activity log connector). Caller is a UPN for people and an object ID (GUID) for service principals and managed identities.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all callers, all operations, all categories, all results).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "11111111-2222-3333-4444-555555555555"] (UPN, or object ID for a service principal)
+> let TargetOperations = dynamic([]);     // Example: ["ROLEASSIGNMENTS/WRITE", "VIRTUALMACHINES/DELETE"] (case-insensitive whole-word match on the operation name)
+> let TargetCategories = dynamic([]);     // Example: ["Administrative", "Policy"] (Administrative, Policy, ServiceHealth, ResourceHealth, Security, Alert, Recommendation, Autoscale)
+> let TargetStatuses = dynamic([]);       // Example: ["Failed", "Failure"] (Started, Succeeded, Failed, Accepted and similar values)
+> let TargetIPAddresses = dynamic([]);    // Example: ["203.0.113.10"]
+> //
+> // ----- Part 1: Filter Azure activity -----
+> //
+> AzureActivity
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where (array_length(TargetUsers) == 0 or Caller in~ (TargetUsers))
+> | where (array_length(TargetOperations) == 0 or OperationNameValue has_any (TargetOperations))
+> | where (array_length(TargetCategories) == 0 or CategoryValue in~ (TargetCategories))
+> | where (array_length(TargetStatuses) == 0 or ActivityStatusValue in~ (TargetStatuses))
+> | where (array_length(TargetIPAddresses) == 0 or CallerIpAddress in (TargetIPAddresses))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, Caller, CallerIpAddress, CategoryValue, OperationNameValue, OperationName,
+>     ActivityStatusValue, ActivitySubstatusValue, ResourceGroup, ResourceProviderValue, _ResourceId,
+>     SubscriptionId, Level, CorrelationId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Entra directory changes by or to a user</strong></summary>
+>
+> Query file: [Entra/Entra-audit-events-by-user.kql](../Entra/Entra-audit-events-by-user.kql).
+>
+> ```kql
+> // User Activity Event Timeline > Entra directory changes by or to a user
+> // Objective: Shows Entra ID audit events (user, group, role, application, policy and device changes, PIM activations, password and MFA changes)
+> // made by a user or application, or made to a user account, with the operation, result, initiator IP and the target object. Raw events, newest first.
+> // Source: AuditLogs (Entra ID audit logs). Initiator is a user (UPN) or an application/service principal (display name).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, all operations, all categories, all results).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com"] (matches the person who made the change, or a user account the change was made to)
+> let TargetOperations = dynamic([]);     // Example: ["Add member to role", "Reset password"] (case-insensitive whole-word match on the operation name)
+> let TargetCategories = dynamic([]);     // Example: ["UserManagement", "RoleManagement", "GroupManagement"]
+> let TargetResults = dynamic([]);        // Example: ["failure"] (success, failure, clientError)
+> //
+> // ----- Part 1: Filter Entra audit events -----
+> //
+> AuditLogs
+> | where TimeGenerated between (StartTime .. EndTime)
+> | extend InitiatedByUser = tostring(InitiatedBy.user.userPrincipalName),
+>     InitiatedByApp = tostring(InitiatedBy.app.displayName),
+>     InitiatorIPAddress = tostring(InitiatedBy.user.ipAddress),
+>     TargetDisplayName = tostring(TargetResources[0].displayName),
+>     TargetType = tostring(TargetResources[0].type),
+>     TargetUserPrincipalName = tostring(TargetResources[0].userPrincipalName)
+> | where (array_length(TargetUsers) == 0 or InitiatedByUser in~ (TargetUsers) or tostring(TargetResources) has_any (TargetUsers))
+> | where (array_length(TargetOperations) == 0 or OperationName has_any (TargetOperations))
+> | where (array_length(TargetCategories) == 0 or Category in~ (TargetCategories))
+> | where (array_length(TargetResults) == 0 or Result in~ (TargetResults))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, InitiatedByUser, InitiatedByApp, InitiatorIPAddress, OperationName, Category, Result, ResultReason,
+>     TargetDisplayName, TargetType, TargetUserPrincipalName, LoggedByService, TargetResources, AdditionalDetails, CorrelationId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
 
 </details>
 

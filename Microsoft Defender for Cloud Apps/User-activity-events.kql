@@ -1,0 +1,33 @@
+// User Activity Event Timeline > Cloud app and Microsoft 365 activity
+// Objective: Shows what a user did across connected cloud apps (Exchange Online, SharePoint, OneDrive, Teams, Azure, Entra and others),
+// with the action, object, source IP, location, device type and user agent. Raw events, newest first.
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+// Source: CloudAppEvents (Microsoft Defender for Cloud Apps). UserId is the UPN for Microsoft 365 workloads and can be a GUID or service name for others (for example Azure).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all users, all applications, all actions).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "Jane Doe", "11111111-2222-3333-4444-555555555555"] (matches UPN, display name, account ID or object ID)
+let TargetApplications = dynamic([]);   // Example: ["Microsoft Exchange Online", "Microsoft Teams"]
+let TargetActionTypes = dynamic([]);    // Example: ["FileDeleted", "Send", "UserLoggedIn"]
+let TargetIPAddresses = dynamic([]);    // Example: ["203.0.113.10"]
+//
+// ----- Part 1: Filter cloud app activity -----
+//
+CloudAppEvents
+| where TimeGenerated between (StartTime .. EndTime)
+| extend UserId = tostring(RawEventData.UserId)
+| where (array_length(TargetUsers) == 0 or UserId in~ (TargetUsers) or AccountDisplayName in~ (TargetUsers)
+    or AccountId in~ (TargetUsers) or AccountObjectId in~ (TargetUsers))
+| where (array_length(TargetApplications) == 0 or Application in~ (TargetApplications))
+| where (array_length(TargetActionTypes) == 0 or ActionType in~ (TargetActionTypes))
+| where (array_length(TargetIPAddresses) == 0 or IPAddress in (TargetIPAddresses))
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, UserId, AccountDisplayName, Application, ActionType, ActivityType, ObjectName, ObjectType,
+    IPAddress, CountryCode, City, IsAdminOperation, IsExternalUser, IsImpersonated, DeviceType, OSPlatform,
+    UserAgent, AccountId, AccountObjectId, ReportId
+| top 1000 by TimeGenerated desc

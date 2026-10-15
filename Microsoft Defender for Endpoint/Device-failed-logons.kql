@@ -1,0 +1,39 @@
+// Device Failed Logons and Brute Force
+// Objective: Shows failed device logons grouped by source IP and device, with the number of failures, the accounts tried, the logon types and failure reasons,
+// and whether a successful logon from the same source followed a failure. Surfaces brute force, password spray, and failed remote (RDP) logons.
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+// Source: DeviceLogonEvents (Microsoft Defender for Endpoint).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all accounts, all devices, all logon types, any number of failures).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+let TargetLogonTypes = dynamic([]);     // Example: ["RemoteInteractive", "Network"] (Interactive, RemoteInteractive, Network, Batch, Service, Local, Unknown)
+let MinFailedLogons = 1;                // Example: 10 (only return sources with at least this many failed logons)
+//
+// ----- Part 1: Filter failed and successful logons -----
+//
+DeviceLogonEvents
+| where TimeGenerated between (StartTime .. EndTime)
+| where ActionType in ("LogonFailed", "LogonSuccess")
+| where (array_length(TargetUsers) == 0 or AccountName in~ (TargetUsers)
+    or strcat(AccountDomain, "\\", AccountName) in~ (TargetUsers) or AccountSid in~ (TargetUsers))
+| where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+| where (array_length(TargetLogonTypes) == 0 or LogonType in~ (TargetLogonTypes))
+//
+// ----- Part 2: Summarize per source IP and device -----
+//
+| extend Account = strcat(AccountDomain, "\\", AccountName)
+| summarize FailedLogons = countif(ActionType == "LogonFailed"), SuccessfulLogons = countif(ActionType == "LogonSuccess"),
+    FailedAccountCount = dcountif(Account, ActionType == "LogonFailed"), FailedAccounts = make_set_if(Account, ActionType == "LogonFailed", 10),
+    LogonTypes = make_set_if(LogonType, ActionType == "LogonFailed"), FailureReasons = make_set_if(FailureReason, ActionType == "LogonFailed" and isnotempty(FailureReason)),
+    FirstFailure = minif(TimeGenerated, ActionType == "LogonFailed"), LastFailure = maxif(TimeGenerated, ActionType == "LogonFailed"),
+    LastSuccess = maxif(TimeGenerated, ActionType == "LogonSuccess")
+    by RemoteIP, DeviceName
+| where FailedLogons >= MinFailedLogons and FailedLogons > 0
+| extend SuccessAfterFailure = iff(isnull(LastSuccess), false, LastSuccess > FirstFailure)
+| sort by FailedLogons desc, LastFailure desc
+| take 1000

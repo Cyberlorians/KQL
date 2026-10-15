@@ -999,4 +999,221 @@ Results are observed events, not complete mailbox or file contents.
 > ```
 > </details>
 
+> <details>
+> <summary>✅ <strong>Device logon summary</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-logon-summary.kql](../Microsoft%20Defender%20for%20Endpoint/Device-logon-summary.kql).
+>
+> ```kql
+> // Device Logon Summary
+> // Objective: Summarizes device logons per account, device, and logon type: successful, failed, and local-admin logons, the remote IPs they came from, and first and last seen.
+> // Use it to see who normally logs on to which device and to spot unusual accounts, logon types, or sources.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceLogonEvents (Microsoft Defender for Endpoint). Other logon events are MDE roll-ups (LogonSuccessAggregatedReport) and attempts (LogonAttempted).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices, all logon types).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> let TargetLogonTypes = dynamic([]);     // Example: ["RemoteInteractive", "Interactive"] (Interactive, RemoteInteractive, Network, Batch, Service, Local, Unknown)
+> //
+> // ----- Part 1: Filter device logon activity -----
+> //
+> DeviceLogonEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where (array_length(TargetUsers) == 0 or AccountName in~ (TargetUsers)
+>     or strcat(AccountDomain, "\\", AccountName) in~ (TargetUsers) or AccountSid in~ (TargetUsers))
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> | where (array_length(TargetLogonTypes) == 0 or LogonType in~ (TargetLogonTypes))
+> //
+> // ----- Part 2: Summarize per account, device, and logon type -----
+> //
+> | summarize SuccessfulLogons = countif(ActionType == "LogonSuccess"), FailedLogons = countif(ActionType == "LogonFailed"),
+>     OtherLogonEvents = countif(ActionType !in ("LogonSuccess", "LogonFailed")), LocalAdminLogons = countif(IsLocalAdmin == true),
+>     RemoteIPCount = dcountif(RemoteIP, isnotempty(RemoteIP)), RemoteIPs = make_set_if(RemoteIP, isnotempty(RemoteIP), 10),
+>     FirstSeen = min(TimeGenerated), LastSeen = max(TimeGenerated)
+>     by AccountDomain, AccountName, DeviceName, LogonType
+> | top 1000 by LastSeen desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Device failed logons and brute force</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-failed-logons.kql](../Microsoft%20Defender%20for%20Endpoint/Device-failed-logons.kql).
+>
+> ```kql
+> // Device Failed Logons and Brute Force
+> // Objective: Shows failed device logons grouped by source IP and device, with the number of failures, the accounts tried, the logon types and failure reasons,
+> // and whether a successful logon from the same source followed a failure. Surfaces brute force, password spray, and failed remote (RDP) logons.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceLogonEvents (Microsoft Defender for Endpoint).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices, all logon types, any number of failures).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> let TargetLogonTypes = dynamic([]);     // Example: ["RemoteInteractive", "Network"] (Interactive, RemoteInteractive, Network, Batch, Service, Local, Unknown)
+> let MinFailedLogons = 1;                // Example: 10 (only return sources with at least this many failed logons)
+> //
+> // ----- Part 1: Filter failed and successful logons -----
+> //
+> DeviceLogonEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where ActionType in ("LogonFailed", "LogonSuccess")
+> | where (array_length(TargetUsers) == 0 or AccountName in~ (TargetUsers)
+>     or strcat(AccountDomain, "\\", AccountName) in~ (TargetUsers) or AccountSid in~ (TargetUsers))
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> | where (array_length(TargetLogonTypes) == 0 or LogonType in~ (TargetLogonTypes))
+> //
+> // ----- Part 2: Summarize per source IP and device -----
+> //
+> | extend Account = strcat(AccountDomain, "\\", AccountName)
+> | summarize FailedLogons = countif(ActionType == "LogonFailed"), SuccessfulLogons = countif(ActionType == "LogonSuccess"),
+>     FailedAccountCount = dcountif(Account, ActionType == "LogonFailed"), FailedAccounts = make_set_if(Account, ActionType == "LogonFailed", 10),
+>     LogonTypes = make_set_if(LogonType, ActionType == "LogonFailed"), FailureReasons = make_set_if(FailureReason, ActionType == "LogonFailed" and isnotempty(FailureReason)),
+>     FirstFailure = minif(TimeGenerated, ActionType == "LogonFailed"), LastFailure = maxif(TimeGenerated, ActionType == "LogonFailed"),
+>     LastSuccess = maxif(TimeGenerated, ActionType == "LogonSuccess")
+>     by RemoteIP, DeviceName
+> | where FailedLogons >= MinFailedLogons and FailedLogons > 0
+> | extend SuccessAfterFailure = iff(isnull(LastSuccess), false, LastSuccess > FirstFailure)
+> | sort by FailedLogons desc, LastFailure desc
+> | take 1000
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Remote logons from public IP addresses</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-remote-logons-from-public-IPs.kql](../Microsoft%20Defender%20for%20Endpoint/Device-remote-logons-from-public-IPs.kql).
+>
+> ```kql
+> // Device Logons from Public IP Addresses
+> // Objective: Shows device logons (successes and failures) where the remote address is a public IP, with the account, device, logon type, and protocol.
+> // Use it to find internet-exposed RDP or SMB, and logons from addresses outside your network.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceLogonEvents (Microsoft Defender for Endpoint).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices, all public IPs, successes and failures).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> let TargetRemoteIPs = dynamic([]);      // Example: ["203.0.113.10"] (exact remote IP address)
+> //
+> // ----- Part 1: Filter logons from public IP addresses -----
+> //
+> DeviceLogonEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where RemoteIPType == "Public"
+> | where (array_length(TargetUsers) == 0 or AccountName in~ (TargetUsers)
+>     or strcat(AccountDomain, "\\", AccountName) in~ (TargetUsers) or AccountSid in~ (TargetUsers))
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> | where (array_length(TargetRemoteIPs) == 0 or RemoteIP in (TargetRemoteIPs))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, AccountDomain, AccountName, DeviceName, ActionType, LogonType,
+>     RemoteIP, RemoteIPType, RemoteDeviceName, RemotePort, Protocol, FailureReason, IsLocalAdmin,
+>     AccountSid, LogonId, InitiatingProcessFileName, InitiatingProcessCommandLine, DeviceId, ReportId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Local account and local admin logons</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-local-account-and-admin-logons.kql](../Microsoft%20Defender%20for%20Endpoint/Device-local-account-and-admin-logons.kql).
+>
+> ```kql
+> // Device Local Account and Local Admin Logons
+> // Objective: Shows device logons by local (non-domain) accounts, by accounts that are local administrators on the device, and by the built-in Administrator (RID 500) account outside a local logon.
+> // Use it to find local accounts bypassing domain policy, local admin use, and lateral movement with local credentials. Each row says why it matched.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceLogonEvents (Microsoft Defender for Endpoint).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices, all logon types, successes and failures).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> let TargetLogonTypes = dynamic([]);     // Example: ["Network", "RemoteInteractive"] (Interactive, RemoteInteractive, Network, Batch, Service, Local, Unknown)
+> //
+> // ----- Part 1: Filter device logon activity -----
+> //
+> DeviceLogonEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where (array_length(TargetUsers) == 0 or AccountName in~ (TargetUsers)
+>     or strcat(AccountDomain, "\\", AccountName) in~ (TargetUsers) or AccountSid in~ (TargetUsers))
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> | where (array_length(TargetLogonTypes) == 0 or LogonType in~ (TargetLogonTypes))
+> //
+> // ----- Part 2: Flag local accounts, local admins, and built-in Administrator logons -----
+> //
+> | extend LocalAccount = tolower(AccountDomain) == tolower(DeviceName), LocalAdmin = IsLocalAdmin == true,
+>     BuiltInAdministratorNotLocal = AccountSid endswith "-500" and coalesce(tobool(todynamic(AdditionalFields).IsLocalLogon), false) == false
+> | where LocalAccount or LocalAdmin or BuiltInAdministratorNotLocal
+> | extend Reason = array_strcat(array_concat(
+>     iff(LocalAccount, dynamic(["Local account"]), dynamic([])),
+>     iff(LocalAdmin, dynamic(["Local administrator"]), dynamic([])),
+>     iff(BuiltInAdministratorNotLocal, dynamic(["Built-in Administrator (RID 500) not a local logon"]), dynamic([]))), "; ")
+> //
+> // ----- Part 3: Output -----
+> //
+> | project TimeGenerated, AccountDomain, AccountName, DeviceName, Reason, ActionType, LogonType, IsLocalAdmin,
+>     RemoteDeviceName, RemoteIP, RemoteIPType, RemotePort, Protocol, FailureReason,
+>     AccountSid, LogonId, InitiatingProcessFileName, InitiatingProcessCommandLine, DeviceId, ReportId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Last interactive logon per device</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-last-logon-per-device.kql](../Microsoft%20Defender%20for%20Endpoint/Device-last-logon-per-device.kql).
+>
+> ```kql
+> // Device Last Interactive Logon
+> // Objective: Shows the most recent successful interactive or remote desktop logon on each device, with the account, whether it is a local admin, and where an RDP logon came from.
+> // Use it to answer "who was last logged on to this device" during an investigation.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceLogonEvents (Microsoft Defender for Endpoint).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> //
+> // ----- Part 1: Filter successful interactive logons -----
+> //
+> DeviceLogonEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where ActionType == "LogonSuccess" and LogonType in ("Interactive", "RemoteInteractive")
+> | where (array_length(TargetUsers) == 0 or AccountName in~ (TargetUsers)
+>     or strcat(AccountDomain, "\\", AccountName) in~ (TargetUsers) or AccountSid in~ (TargetUsers))
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> //
+> // ----- Part 2: Keep the latest logon per device -----
+> //
+> | summarize arg_max(TimeGenerated, *) by DeviceId
+> | project TimeGenerated, DeviceName, AccountDomain, AccountName, LogonType, IsLocalAdmin,
+>     RemoteDeviceName, RemoteIP, RemotePort, Protocol, AccountSid, LogonId,
+>     InitiatingProcessFileName, InitiatingProcessCommandLine, DeviceId, ReportId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
 </details>

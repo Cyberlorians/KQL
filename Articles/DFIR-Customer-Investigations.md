@@ -6,6 +6,8 @@ These queries are written for the unified Defender portal (Microsoft Sentinel an
 
 Results are observed events, not complete mailbox or file contents.
 
+**Coverage disclaimer:** Not every item a customer may ask about is tracked here. These queries cover only the products and logs listed on this page, and only where the matching data connector is enabled and the product records that activity. Anything from another product, or any detail a product does not log, is not covered and would need to be asked about and tracked specifically for that product. An empty result means nothing was observed in the data source, not that the activity did not happen.
+
 <details open>
 <summary><strong>Email</strong></summary>
 

@@ -893,6 +893,91 @@ Results are observed events, not complete mailbox or file contents.
 > ```
 > </details>
 
+> <details>
+> <summary>✅ <strong>Windows user-initiated logoffs</strong></summary>
+>
+> Query file: [Windows/SecurityEvent/Windows-user-initiated-logoff.kql](../Windows/SecurityEvent/Windows-user-initiated-logoff.kql).
+>
+> ```kql
+> // Windows User-Initiated Logoffs (Event 4647)
+> // Objective: Shows users who actively signed out (clicked Sign out / ran logoff) of a Windows computer. A disconnected RDP session does not generate this event. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: SecurityEvent (Windows Security log, collected by the Windows Security Events connector / Azure Monitor Agent).
+> // Audit policy: Computer Configuration > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Logon/Logoff > Audit Logoff (Success).
+> // Derived from the M-21-31 EL0 tracked query (EventID 4647).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results.
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetComputers = dynamic([]);      // Example: ["dc01", "pc01"] (case-insensitive whole-word match on the computer name)
+> let ExcludeMachineAccounts = true;      // Set to false to include computer accounts (names ending in $)
+> //
+> // ----- Part 1: Filter user-initiated logoff events -----
+> //
+> SecurityEvent
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where EventID == 4647
+> | where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+> | where (array_length(TargetUsers) == 0 or TargetUserName in~ (TargetUsers)
+>     or strcat(TargetDomainName, "\\", TargetUserName) in~ (TargetUsers) or TargetUserSid in~ (TargetUsers))
+> | where ExcludeMachineAccounts == false or TargetUserName !endswith "$"
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, UserName = TargetUserName, UserDomain = TargetDomainName, EventID, Computer,
+>     LogonId = TargetLogonId, UserSid = TargetUserSid, Activity
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary><strong>Windows explicit credential logons (Run as)</strong></summary>
+>
+> Query file: [Windows/SecurityEvent/Windows-explicit-credential-logons.kql](../Windows/SecurityEvent/Windows-explicit-credential-logons.kql).
+>
+> ```kql
+> // Windows Explicit Credential Logons / Run As (Event 4648)
+> // Objective: Shows logons attempted with explicit credentials (Run as, mapped drives with alternate credentials, scheduled tasks, lateral movement tooling), including which account ran the process, whose credentials were used, the target server, and the process. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: SecurityEvent (Windows Security log, collected by the Windows Security Events connector / Azure Monitor Agent).
+> // Audit policy: Computer Configuration > Windows Settings > Security Settings > Advanced Audit Policy Configuration > Logon/Logoff > Audit Logon (Success).
+> // Derived from the M-21-31 EL0 tracked query (EventID 4648).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results.
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["xadmin", "CONTOSO\\xadmin"] (matches either the account that ran the process or the account whose credentials were used)
+> let TargetComputers = dynamic([]);      // Example: ["dc01", "pc01"] (case-insensitive whole-word match on the computer name)
+> let ExcludeMachineAccounts = true;      // Set to false to include computer accounts (names ending in $)
+> //
+> // ----- Part 1: Filter explicit credential logon events -----
+> // SubjectUserName = account that ran the process. TargetUserName = account whose credentials were supplied.
+> //
+> SecurityEvent
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where EventID == 4648
+> | where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+> | where (array_length(TargetUsers) == 0 or SubjectUserName in~ (TargetUsers) or TargetUserName in~ (TargetUsers)
+>     or strcat(SubjectDomainName, "\\", SubjectUserName) in~ (TargetUsers)
+>     or strcat(TargetDomainName, "\\", TargetUserName) in~ (TargetUsers))
+> | where ExcludeMachineAccounts == false or (SubjectUserName !endswith "$" and TargetUserName !endswith "$")
+> //
+> // ----- Part 2: Output -----
+> // IsCrossUserActivity = true when the credentials used belong to a different account than the one that ran the process.
+> //
+> | extend IsCrossUserActivity = tolower(SubjectUserName) != tolower(TargetUserName)
+> | project TimeGenerated, UserName = SubjectUserName, UserDomain = SubjectDomainName, EventID, Computer,
+>     CredentialsUsedFor = strcat(TargetDomainName, "\\", TargetUserName), IsCrossUserActivity,
+>     TargetServerName, ProcessName, IpAddress, SubjectLogonId, SubjectUserSid, Activity
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
 </details>
 
 <details>
@@ -1217,6 +1302,61 @@ Results are observed events, not complete mailbox or file contents.
 >         strcat("Status ", Status))
 > | project TimeGenerated, UserName = TargetUserName, UserDomain = TargetDomainName, ResultText, Status, Computer, SourceIP,
 >     CertIssuer, CertSerialNumber, CertThumbprint, PreAuthType, ServiceName, UserSid = TargetSid
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary><strong>Windows Kerberos pre-authentication failures</strong></summary>
+>
+> Query file: [Windows/SecurityEvent/Windows-kerberos-preauthentication-failures.kql](../Windows/SecurityEvent/Windows-kerberos-preauthentication-failures.kql).
+>
+> ```kql
+> // Windows Kerberos Pre-Authentication Failures (Event 4771)
+> // Objective: Shows failed Kerberos pre-authentication attempts at the domain controller (wrong password, expired or disabled account, unknown user). Useful for Kerberos password spray and brute force. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: SecurityEvent from domain controllers (Windows Security log, collected by the Windows Security Events connector / Azure Monitor Agent).
+> // Audit policy (domain controllers): Advanced Audit Policy Configuration > Account Logon > Audit Kerberos Authentication Service (Failure).
+> // Derived from the M-21-31 EL0 tracked query (EventID 4771).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results.
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetComputers = dynamic([]);      // Example: ["dc01"] (case-insensitive whole-word match on the domain controller name)
+> let TargetStatusCodes = dynamic([]);    // Example: ["0x18"] (0x6 unknown user, 0x12 disabled/locked, 0x17 password expired, 0x18 bad password)
+> let ExcludeMachineAccounts = true;      // Set to false to include computer accounts (names ending in $)
+> //
+> // ----- Part 1: Filter Kerberos pre-authentication failures -----
+> //
+> SecurityEvent
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where EventID == 4771
+> | where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+> | where (array_length(TargetStatusCodes) == 0 or Status in~ (TargetStatusCodes))
+> | where (array_length(TargetUsers) == 0 or TargetUserName in~ (TargetUsers)
+>     or strcat(TargetDomainName, "\\", TargetUserName) in~ (TargetUsers) or TargetSid in~ (TargetUsers))
+> | where ExcludeMachineAccounts == false or TargetUserName !endswith "$"
+> //
+> // ----- Part 2: Output -----
+> //
+> | extend SourceIP = replace_string(IpAddress, "::ffff:", ""),
+>     FailureReason = case(
+>         tolower(Status) == "0x6", "Client not found in Kerberos database (unknown user)",
+>         tolower(Status) == "0x7", "Server not found in Kerberos database",
+>         tolower(Status) == "0xc", "KDC policy rejected request (logon time or workstation restriction)",
+>         tolower(Status) == "0xe", "Unsupported encryption type",
+>         tolower(Status) == "0x10", "No support for PADATA type (likely smart card certificate issue)",
+>         tolower(Status) == "0x12", "Account disabled, expired, locked out, or logon hours restricted",
+>         tolower(Status) == "0x17", "Password expired",
+>         tolower(Status) == "0x18", "Pre-authentication failed (bad password)",
+>         tolower(Status) == "0x25", "Clock skew too great",
+>         strcat("Status ", Status)),
+>     IsHighPriorityFailure = tolower(Status) in ("0x6", "0x12", "0x18")
+> | project TimeGenerated, UserName = TargetUserName, UserDomain = TargetDomainName, EventID, Computer, SourceIP,
+>     FailureReason, Status, IsHighPriorityFailure, ServiceName, UserSid = TargetSid, Activity
 > | top 1000 by TimeGenerated desc
 > ```
 > </details>

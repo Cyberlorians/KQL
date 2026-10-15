@@ -1,12 +1,12 @@
 # DFIR Customer Investigations
 
-Expand a customer request to copy its full KQL. Set the parameters before running; default window: last 30 days. Each query is also saved as a `.kql` file under its product folder.
+Expand a request to copy its full KQL. Set the parameters before running; default window: last 30 days. Each query is also saved as a `.kql` file under its product folder.
 
 These queries are written for the unified Defender portal (Microsoft Sentinel and Defender XDR together) and we recommend running them there. Email queries use `TimeGenerated`, SharePoint and OneDrive queries read the Sentinel `OfficeActivity` table (Microsoft 365 connector with SharePoint enabled), Teams call and meeting queries read the Defender XDR `CallActivityEvents` table, and User Logon Events queries read `SigninLogs` and `AADNonInteractiveUserSignInLogs` (Entra), `DeviceLogonEvents` (Defender for Endpoint) and `IdentityLogonEvents` (Defender for Identity). If you are not unified, the table or timestamp column may differ, for example replace `TimeGenerated` with `Timestamp` in Defender XDR only, so adjust the query or, better, unify Sentinel and Defender XDR. A green check mark means the query was tested against live tenant data. See [Collaboration connectors and validation](Collaboration-Connectors.md).
 
 Results are observed events, not complete mailbox or file contents.
 
-**Coverage disclaimer:** Not every item a customer may ask about is tracked here. These queries cover only the products and logs listed on this page, and only where the matching data connector is enabled and the product records that activity. Anything from another product, or any detail a product does not log, is not covered and would need to be asked about and tracked specifically for that product. An empty result means nothing was observed in the data source, not that the activity did not happen.
+**Coverage disclaimer:** Not every item that may be requested is tracked here. These queries cover only the products and logs listed on this page, and only where the matching data connector is enabled and the product records that activity. Anything from another product, or any detail a product does not log, is not covered and would need to be asked about and tracked specifically for that product. An empty result means nothing was observed in the data source, not that the activity did not happen.
 
 <details open>
 <summary><strong>Email</strong></summary>

@@ -1,0 +1,35 @@
+// User Activity Event Timeline > Entra directory changes by or to a user
+// Objective: Shows Entra ID audit events (user, group, role, application, policy and device changes, PIM activations, password and MFA changes)
+// made by a user or application, or made to a user account, with the operation, result, initiator IP and the target object. Raw events, newest first.
+// Source: AuditLogs (Entra ID audit logs). Initiator is a user (UPN) or an application/service principal (display name).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all users, all operations, all categories, all results).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com"] (matches the person who made the change, or a user account the change was made to)
+let TargetOperations = dynamic([]);     // Example: ["Add member to role", "Reset password"] (case-insensitive whole-word match on the operation name)
+let TargetCategories = dynamic([]);     // Example: ["UserManagement", "RoleManagement", "GroupManagement"]
+let TargetResults = dynamic([]);        // Example: ["failure"] (success, failure, clientError)
+//
+// ----- Part 1: Filter Entra audit events -----
+//
+AuditLogs
+| where TimeGenerated between (StartTime .. EndTime)
+| extend InitiatedByUser = tostring(InitiatedBy.user.userPrincipalName),
+    InitiatedByApp = tostring(InitiatedBy.app.displayName),
+    InitiatorIPAddress = tostring(InitiatedBy.user.ipAddress),
+    TargetDisplayName = tostring(TargetResources[0].displayName),
+    TargetType = tostring(TargetResources[0].type),
+    TargetUserPrincipalName = tostring(TargetResources[0].userPrincipalName)
+| where (array_length(TargetUsers) == 0 or InitiatedByUser in~ (TargetUsers) or tostring(TargetResources) has_any (TargetUsers))
+| where (array_length(TargetOperations) == 0 or OperationName has_any (TargetOperations))
+| where (array_length(TargetCategories) == 0 or Category in~ (TargetCategories))
+| where (array_length(TargetResults) == 0 or Result in~ (TargetResults))
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, InitiatedByUser, InitiatedByApp, InitiatorIPAddress, OperationName, Category, Result, ResultReason,
+    TargetDisplayName, TargetType, TargetUserPrincipalName, LoggedByService, TargetResources, AdditionalDetails, CorrelationId
+| top 1000 by TimeGenerated desc

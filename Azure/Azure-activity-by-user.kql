@@ -1,0 +1,32 @@
+// User Activity Event Timeline > Azure resource activity
+// Objective: Shows the Azure control-plane actions (create, update, delete, role and policy changes) performed by a user or service principal,
+// with the operation, result, resource, subscription and caller IP. Raw events, newest first.
+// Source: AzureActivity (Azure Activity log connector). Caller is a UPN for people and an object ID (GUID) for service principals and managed identities.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all callers, all operations, all categories, all results).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "11111111-2222-3333-4444-555555555555"] (UPN, or object ID for a service principal)
+let TargetOperations = dynamic([]);     // Example: ["ROLEASSIGNMENTS/WRITE", "VIRTUALMACHINES/DELETE"] (case-insensitive whole-word match on the operation name)
+let TargetCategories = dynamic([]);     // Example: ["Administrative", "Policy"] (Administrative, Policy, ServiceHealth, ResourceHealth, Security, Alert, Recommendation, Autoscale)
+let TargetStatuses = dynamic([]);       // Example: ["Failed", "Failure"] (Started, Succeeded, Failed, Accepted and similar values)
+let TargetIPAddresses = dynamic([]);    // Example: ["203.0.113.10"]
+//
+// ----- Part 1: Filter Azure activity -----
+//
+AzureActivity
+| where TimeGenerated between (StartTime .. EndTime)
+| where (array_length(TargetUsers) == 0 or Caller in~ (TargetUsers))
+| where (array_length(TargetOperations) == 0 or OperationNameValue has_any (TargetOperations))
+| where (array_length(TargetCategories) == 0 or CategoryValue in~ (TargetCategories))
+| where (array_length(TargetStatuses) == 0 or ActivityStatusValue in~ (TargetStatuses))
+| where (array_length(TargetIPAddresses) == 0 or CallerIpAddress in (TargetIPAddresses))
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, Caller, CallerIpAddress, CategoryValue, OperationNameValue, OperationName,
+    ActivityStatusValue, ActivitySubstatusValue, ResourceGroup, ResourceProviderValue, _ResourceId,
+    SubscriptionId, Level, CorrelationId
+| top 1000 by TimeGenerated desc

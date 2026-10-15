@@ -1366,7 +1366,176 @@ Results are observed events, not complete mailbox or file contents.
 <details>
 <summary><strong>User Device Activity</strong></summary>
 
-No queries added yet.
+> <details>
+> <summary>✅ <strong>USB and removable media</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-USB-and-removable-media.kql](../Microsoft Defender for Endpoint/Device-USB-and-removable-media.kql).
+>
+> ```kql
+> // Device USB and Removable Media Activity
+> // Objective: Shows USB drives and plug-and-play devices connected to, mounted on, or removed from a device, and the user signed in or running the process that triggered the event.
+> // Use it to see who plugged in removable media, which drive (name, serial number, drive letter) and when. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceEvents (Microsoft Defender for Endpoint). ActionTypes: UsbDriveMounted, UsbDriveUnmounted, UsbDriveDriveLetterChanged, PnpDeviceConnected, PnpDeviceAllowed, PnpDeviceBlocked.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices, all USB and plug-and-play events).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches the account name, DOMAIN\name, or SID that initiated the event)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> let TargetActionTypes = dynamic([]);    // Example: ["UsbDriveMounted"] (empty = all six ActionTypes listed above)
+> //
+> // ----- Part 1: Filter USB and removable media events -----
+> //
+> DeviceEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where ActionType in ("UsbDriveMounted", "UsbDriveUnmounted", "UsbDriveDriveLetterChanged", "PnpDeviceConnected", "PnpDeviceAllowed", "PnpDeviceBlocked")
+> | where (array_length(TargetActionTypes) == 0 or ActionType in~ (TargetActionTypes))
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> | where (array_length(TargetUsers) == 0 or InitiatingProcessAccountName in~ (TargetUsers)
+>     or strcat(InitiatingProcessAccountDomain, "\\", InitiatingProcessAccountName) in~ (TargetUsers)
+>     or InitiatingProcessAccountSid in~ (TargetUsers))
+> //
+> // ----- Part 2: Output -----
+> //
+> | extend Details = todynamic(AdditionalFields)
+> | project TimeGenerated, UserName = InitiatingProcessAccountName, UserDomain = InitiatingProcessAccountDomain, DeviceName, ActionType,
+>     DriveLetter = tostring(coalesce(Details.DriveLetter, Details.DriveLetters)), DriveName = tostring(coalesce(Details.ProductName, Details.DeviceDescription, Details.ClassName)),
+>     SerialNumber = tostring(coalesce(Details.SerialNumber, Details.DeviceId)), Manufacturer = tostring(Details.Manufacturer),
+>     InitiatingProcessFileName, InitiatingProcessCommandLine, AdditionalFields, UserSid = InitiatingProcessAccountSid, DeviceId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>PowerShell commands</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-PowerShell-commands.kql](../Microsoft Defender for Endpoint/Device-PowerShell-commands.kql).
+>
+> ```kql
+> // Device PowerShell Commands
+> // Objective: Shows PowerShell commands run on a device, with the user, device, the command text, and the process that launched it.
+> // Use it to see what a user ran in PowerShell, and to hunt for encoded, download, or credential-access commands with the keyword filter. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceEvents, ActionType PowerShellCommand (Microsoft Defender for Endpoint).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices, all commands).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches the account name, DOMAIN\name, or SID that ran the command)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> let CommandKeywords = dynamic([]);      // Example: ["Invoke-WebRequest", "-enc", "DownloadString"] (shows commands containing any of these words)
+> //
+> // ----- Part 1: Filter PowerShell commands -----
+> //
+> DeviceEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where ActionType == "PowerShellCommand"
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> | where (array_length(TargetUsers) == 0 or InitiatingProcessAccountName in~ (TargetUsers)
+>     or strcat(InitiatingProcessAccountDomain, "\\", InitiatingProcessAccountName) in~ (TargetUsers)
+>     or InitiatingProcessAccountSid in~ (TargetUsers))
+> | extend Command = tostring(todynamic(AdditionalFields).Command)
+> | where (array_length(CommandKeywords) == 0 or Command has_any (CommandKeywords))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, UserName = InitiatingProcessAccountName, UserDomain = InitiatingProcessAccountDomain, DeviceName, Command,
+>     InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, FileName, ProcessCommandLine,
+>     UserSid = InitiatingProcessAccountSid, DeviceId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Scheduled task activity</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-scheduled-task-activity.kql](../Microsoft Defender for Endpoint/Device-scheduled-task-activity.kql).
+>
+> ```kql
+> // Device Scheduled Task Activity
+> // Objective: Shows scheduled tasks created, updated, deleted, enabled, disabled, or run on a device, with the task name, the user, and the process that made the change.
+> // Use it to find persistence and to see which user scheduled what. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceEvents, ActionTypes beginning with ScheduledTask (Microsoft Defender for Endpoint).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices, all task actions).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches the account name, DOMAIN\name, or SID that made the change)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> let TargetActionTypes = dynamic([]);    // Example: ["ScheduledTaskCreated", "ScheduledTaskDeleted"] (empty = all scheduled task actions)
+> let TargetTaskNames = dynamic([]);      // Example: ["Updater", "\\Microsoft\\Windows"] (shows tasks whose name contains any of these)
+> //
+> // ----- Part 1: Filter scheduled task events -----
+> //
+> DeviceEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where ActionType startswith "ScheduledTask"
+> | where (array_length(TargetActionTypes) == 0 or ActionType in~ (TargetActionTypes))
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> | where (array_length(TargetUsers) == 0 or InitiatingProcessAccountName in~ (TargetUsers)
+>     or strcat(InitiatingProcessAccountDomain, "\\", InitiatingProcessAccountName) in~ (TargetUsers)
+>     or InitiatingProcessAccountSid in~ (TargetUsers))
+> | extend Details = todynamic(AdditionalFields)
+> | extend TaskName = tostring(Details.TaskName)
+> | where (array_length(TargetTaskNames) == 0 or TaskName has_any (TargetTaskNames))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, UserName = InitiatingProcessAccountName, UserDomain = InitiatingProcessAccountDomain, DeviceName, ActionType, TaskName,
+>     InitiatingProcessFileName, InitiatingProcessCommandLine, AdditionalFields, UserSid = InitiatingProcessAccountSid, DeviceId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Process execution by user</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-process-execution.kql](../Microsoft Defender for Endpoint/Device-process-execution.kql).
+>
+> ```kql
+> // Device Process Execution by User
+> // Objective: Shows the processes a user started on a device, with the command line, the parent process, and the file hash.
+> // Use it to answer "what did this user run on this machine". Raw events (ProcessCreated only; aggregated reports are excluded).
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceProcessEvents (Microsoft Defender for Endpoint).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices, all processes).
+> //
+> let StartTime = ago(7d);                // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> let TargetProcessNames = dynamic([]);   // Example: ["powershell.exe", "cmd.exe"] (exact file name of the process that started)
+> let CommandLineKeywords = dynamic([]);  // Example: ["-enc", "whoami", "net user"] (shows command lines containing any of these)
+> //
+> // ----- Part 1: Filter process creation events -----
+> //
+> DeviceProcessEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where ActionType == "ProcessCreated"
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> | where (array_length(TargetUsers) == 0 or AccountName in~ (TargetUsers)
+>     or strcat(AccountDomain, "\\", AccountName) in~ (TargetUsers) or AccountSid in~ (TargetUsers))
+> | where (array_length(TargetProcessNames) == 0 or FileName in~ (TargetProcessNames))
+> | where (array_length(CommandLineKeywords) == 0 or ProcessCommandLine has_any (CommandLineKeywords))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, UserName = AccountName, UserDomain = AccountDomain, DeviceName, FileName, ProcessCommandLine, FolderPath,
+>     InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName, ProcessIntegrityLevel, SHA256,
+>     UserSid = AccountSid, DeviceId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
 
 </details>
 

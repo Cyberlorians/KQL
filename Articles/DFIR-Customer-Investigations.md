@@ -1673,6 +1673,49 @@ Results are observed events, not complete mailbox or file contents.
 > ```
 > </details>
 
+> <details>
+> <summary>✅ <strong>Domain controller DNS server queries</strong></summary>
+>
+> Query file: [Windows/DNS/Windows-DNS-server-queries.kql](../Windows/DNS/Windows-DNS-server-queries.kql).
+>
+> ```kql
+> // Domain Controller DNS Server Queries
+> // Objective: Shows the DNS requests and responses handled by a Windows DNS server (the domain controller), with who asked, the domain looked up, the record type, the answer, and the result.
+> // Use it to see which domains clients resolved through the domain controller, and to hunt for a specific client, domain, record type, or failed lookup with the filters. Also shows dynamic DNS updates. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: ASimDnsActivityLogs, from the Windows DNS Events via AMA connector (Microsoft Sentinel).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all clients, all DNS servers, all domains, all record types).
+> //
+> let StartTime = ago(1d);                // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetClientIPs = dynamic([]);      // Example: ["10.1.1.25", "10.1.1.4"] (the IP address that sent the DNS request)
+> let TargetDnsServers = dynamic([]);     // Example: ["adds01", "dc02"] (case-insensitive whole-word match on the DNS server / domain controller name)
+> let DomainKeywords = dynamic([]);       // Example: ["pastebin.com", "ngrok", "duckdns.org"] (whole-word match: "microsoftonline.com" finds login.microsoftonline.com, "microsoft" does not)
+> let RecordTypes = dynamic([]);          // Example: ["A", "AAAA", "TXT", "MX", "SRV"] (the DNS record type that was requested)
+> let EventTypes = dynamic([]);           // Example: ["Query"] or ["Update"] (Query = lookups, Update = dynamic DNS record changes)
+> let EventResults = dynamic([]);         // Example: ["Success"] or ["Failure"] (the result of the response; requests have no result)
+> //
+> // ----- Part 1: Filter DNS server events -----
+> //
+> ASimDnsActivityLogs
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where (array_length(TargetDnsServers) == 0 or DvcHostname has_any (TargetDnsServers))
+> | where (array_length(TargetClientIPs) == 0 or SrcIpAddr in (TargetClientIPs))
+> | where (array_length(DomainKeywords) == 0 or DnsQuery has_any (DomainKeywords))
+> | where (array_length(RecordTypes) == 0 or DnsQueryTypeName in~ (RecordTypes))
+> | where (array_length(EventTypes) == 0 or EventType in~ (EventTypes))
+> | where (array_length(EventResults) == 0 or EventResult in~ (EventResults))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, DvcHostname, SrcIpAddr, SrcPortNumber, DstIpAddr, DnsQuery, DnsQueryTypeName, EventType, EventSubType, EventResult,
+>     DnsResponseName, DnsResponseCode, DnsFlags, EventOriginalType, AdditionalFields, EventProduct, EventVendor
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
 </details>
 
 <details>

@@ -1,0 +1,59 @@
+// Windows Kerberos and NTLM Authentication
+// Objective: Shows credential validation by domain controllers: Kerberos ticket requests (successful and failed pre-authentication) and NTLM
+// validations, with the account, the source IP or workstation, the service requested, and a readable result. Surfaces password spray and brute force.
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+// Source: SecurityEvent (Windows Security log on domain controllers).
+// Event IDs: 4768 Kerberos TGT requested, 4771 Kerberos pre-authentication failed, 4776 NTLM credential validation.
+// Audit policy: Account Logon > Audit Kerberos Authentication Service (Success, Failure) and Audit Credential Validation (Success, Failure).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all accounts, all domain controllers, all three event IDs, successes and failures).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["jdoe", "jdoe@contoso.com", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+let TargetComputers = dynamic([]);      // Example: ["dc01"] (the domain controller that handled the request; case-insensitive whole-word match)
+let TargetEventIDs = dynamic([]);       // Example: [4771, 4776] (4768, 4771, 4776; empty = all three)
+let TargetStatusCodes = dynamic([]);    // Example: ["0x18", "0xc000006a"] (Kerberos or NTLM status codes; empty = all, success included)
+let ExcludeMachineAccounts = false;     // Set to true to hide computer accounts (names ending in $)
+//
+// ----- Part 1: Filter Kerberos and NTLM events -----
+//
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID in (4768, 4771, 4776)
+| where (array_length(TargetEventIDs) == 0 or EventID in (TargetEventIDs))
+| where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+| where (array_length(TargetStatusCodes) == 0 or Status in~ (TargetStatusCodes))
+| where (array_length(TargetUsers) == 0 or TargetUserName in~ (TargetUsers)
+    or strcat(TargetDomainName, "\\", TargetUserName) in~ (TargetUsers) or TargetSid in~ (TargetUsers))
+| where ExcludeMachineAccounts == false or TargetUserName !endswith "$"
+//
+// ----- Part 2: Output -----
+//
+| extend Protocol = iff(EventID == 4776, "NTLM", "Kerberos"),
+    Event = case(
+        EventID == 4768, "Kerberos TGT requested",
+        EventID == 4771, "Kerberos pre-authentication failed",
+        "NTLM credential validation"),
+    SourceIP = replace_string(IpAddress, "::ffff:", ""),
+    ResultText = case(
+        tolower(Status) == "0x0", "Success",
+        tolower(Status) == "0x6", "Kerberos: client not found in database (unknown user)",
+        tolower(Status) == "0x7", "Kerberos: server not found in database",
+        tolower(Status) == "0xc", "Kerberos: logon time or workstation restriction",
+        tolower(Status) == "0x12", "Kerberos: account disabled, expired, locked out, or logon hours restricted",
+        tolower(Status) == "0x17", "Kerberos: password expired",
+        tolower(Status) == "0x18", "Kerberos: pre-authentication failed (wrong password)",
+        tolower(Status) == "0x25", "Kerberos: clock skew too great",
+        tolower(Status) == "0xc0000064", "NTLM: user name does not exist",
+        tolower(Status) == "0xc000006a", "NTLM: wrong password",
+        tolower(Status) == "0xc000006f", "NTLM: logon outside allowed hours",
+        tolower(Status) == "0xc0000070", "NTLM: workstation restriction",
+        tolower(Status) == "0xc0000071", "NTLM: password expired",
+        tolower(Status) == "0xc0000072", "NTLM: account disabled",
+        tolower(Status) == "0xc0000234", "NTLM: account locked out",
+        strcat("Status ", Status))
+| project TimeGenerated, UserName = TargetUserName, UserDomain = TargetDomainName, EventID, Event, Protocol, ResultText, Status,
+    Computer, SourceIP, SourceWorkstation = Workstation, ServiceName, UserSid = TargetSid
+| top 1000 by TimeGenerated desc

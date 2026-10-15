@@ -1,0 +1,62 @@
+// Windows Account Logons and Logoffs
+// Objective: Shows who logged on, failed to log on, or logged off a Windows computer, with the account, logon type, source IP and workstation,
+// authentication package, failure reason, and (for explicit-credential logons) the account whose credentials were used. Raw events.
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+// Source: SecurityEvent (Windows Security log, collected by the Windows Security Events connector / Azure Monitor Agent).
+// Event IDs: 4624 logon, 4625 failed logon, 4634 logoff, 4647 user-initiated logoff, 4648 logon using explicit credentials.
+// Audit policy: Logon/Logoff > Audit Logon (Success, Failure), Audit Logoff (Success), Audit Other Logon/Logoff Events (Success).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all accounts, all computers, all five event IDs, all logon types).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+let TargetComputers = dynamic([]);      // Example: ["dc01", "pc01"] (case-insensitive whole-word match on the computer name)
+let TargetEventIDs = dynamic([]);       // Example: [4625] (4624, 4625, 4634, 4647, 4648; empty = all five)
+let TargetLogonTypes = dynamic([]);     // Example: [2, 10] (2 Interactive, 3 Network, 4 Batch, 5 Service, 7 Unlock, 8 NetworkCleartext, 9 NewCredentials, 10 RemoteInteractive, 11 CachedInteractive). Events without a logon type (4647, 4648) are hidden when this is set.
+let ExcludeMachineAccounts = false;     // Set to true to hide computer accounts (names ending in $)
+//
+// ----- Part 1: Filter Windows logon and logoff events -----
+//
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID in (4624, 4625, 4634, 4647, 4648)
+| where (array_length(TargetEventIDs) == 0 or EventID in (TargetEventIDs))
+| where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+| where (array_length(TargetLogonTypes) == 0 or LogonType in (TargetLogonTypes))
+// For 4648 the account that ran the process is the Subject; for every other event the account is the Target.
+| extend UserName = iff(EventID == 4648, SubjectUserName, TargetUserName),
+    UserDomain = iff(EventID == 4648, SubjectDomainName, TargetDomainName),
+    UserSid = iff(EventID == 4648, SubjectUserSid, TargetUserSid)
+| where (array_length(TargetUsers) == 0 or UserName in~ (TargetUsers)
+    or strcat(UserDomain, "\\", UserName) in~ (TargetUsers) or UserSid in~ (TargetUsers))
+| where ExcludeMachineAccounts == false or UserName !endswith "$"
+//
+// ----- Part 2: Output -----
+//
+| extend Event = case(
+        EventID == 4624, "Logon",
+        EventID == 4625, "Failed logon",
+        EventID == 4634, "Logoff",
+        EventID == 4647, "User-initiated logoff",
+        "Logon with explicit credentials"),
+    FailureReasonText = iff(EventID != 4625, "", case(
+        tolower(SubStatus) == "0xc0000064", "User name does not exist",
+        tolower(SubStatus) == "0xc000006a", "Wrong password",
+        tolower(SubStatus) == "0xc000006d", "Bad user name or authentication information",
+        tolower(SubStatus) == "0xc000006e", "Account restriction",
+        tolower(SubStatus) == "0xc000006f", "Logon outside allowed hours",
+        tolower(SubStatus) == "0xc0000070", "Workstation restriction",
+        tolower(SubStatus) == "0xc0000071", "Password expired",
+        tolower(SubStatus) == "0xc0000072", "Account disabled",
+        tolower(SubStatus) == "0xc000015b", "Logon type not granted",
+        tolower(SubStatus) == "0xc0000193", "Account expired",
+        tolower(SubStatus) == "0xc0000224", "Password must change at next logon",
+        tolower(SubStatus) == "0xc0000234", "Account locked out",
+        strcat("Status ", Status, " / SubStatus ", SubStatus))),
+    CredentialsUsedFor = iff(EventID == 4648, strcat(TargetDomainName, "\\", TargetUserName), "")
+| project TimeGenerated, UserName, UserDomain, EventID, Event, LogonTypeName, Computer, IpAddress, WorkstationName,
+    AuthenticationPackageName, LogonProcessName, FailureReasonText, Status, SubStatus, CredentialsUsedFor,
+    TargetServerName, ProcessName, TargetLogonId, SubjectLogonId, UserSid
+| top 1000 by TimeGenerated desc

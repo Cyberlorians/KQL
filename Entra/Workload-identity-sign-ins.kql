@@ -1,0 +1,37 @@
+// Entra Application and Managed Identity Sign-ins
+// Objective: Shows every sign-in by a service principal (application) or managed identity in Microsoft Entra ID, with the identity, the app,
+// the resource it signed in to, outcome, source IP and location, and the credential type used (secret, certificate, federated). Raw events.
+// Written for the unified Defender portal (Sentinel + XDR). Sources: AADServicePrincipalSignInLogs and AADManagedIdentitySignInLogs (Sentinel tables).
+// These are non-human sign-ins and are far more numerous than user sign-ins.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all identities, all apps, successes and failures).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetIdentities = dynamic([]);     // Example: ["MyAutomationApp", "vm-prod-01"] (service principal or managed identity display name)
+let TargetAppIds = dynamic([]);         // Example: ["00000000-0000-0000-0000-000000000000"]
+let TargetResults = dynamic([]);        // Example: ["700027", "7000222"] (result codes; "0" is success; empty = all)
+let TargetIdentityTypes = dynamic([]);  // Example: ["Managed identity"] (Service principal, Managed identity; empty = both)
+//
+// ----- Part 1: Combine service principal and managed identity sign-ins -----
+//
+union
+    (AADServicePrincipalSignInLogs
+        | where TimeGenerated between (StartTime .. EndTime)
+        | extend IdentityType = "Service principal"),
+    (AADManagedIdentitySignInLogs
+        | where TimeGenerated between (StartTime .. EndTime)
+        | extend IdentityType = "Managed identity")
+| where (array_length(TargetIdentityTypes) == 0 or IdentityType in~ (TargetIdentityTypes))
+| where (array_length(TargetIdentities) == 0 or ServicePrincipalName in~ (TargetIdentities))
+| where (array_length(TargetAppIds) == 0 or AppId in~ (TargetAppIds))
+| where (array_length(TargetResults) == 0 or ResultType in (TargetResults))
+//
+// ----- Part 2: Output -----
+//
+| extend Outcome = iff(ResultType == "0", "Success", "Failure")
+| project TimeGenerated, ServicePrincipalName, IdentityType, Outcome, ResultType, ResultDescription, AppId, ServicePrincipalId,
+    ResourceDisplayName, IPAddress, Location, ClientCredentialType, FederatedCredentialId, ConditionalAccessStatus,
+    UserAgent, CorrelationId, Id
+| top 1000 by TimeGenerated desc

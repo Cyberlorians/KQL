@@ -1,0 +1,55 @@
+// Entra User Risk Events and Risky Sign-ins
+// Objective: Shows risky Microsoft Entra ID activity for users: Identity Protection risk detections (for example unfamiliar sign-in properties,
+// anonymous IP, leaked credentials) and sign-ins that Entra flagged as risky, with the user, risk type, risk level, state, IP address,
+// location and application, plus the user's current risk state. Raw events.
+// Written for the unified Defender portal (Sentinel + XDR). Sources: AADUserRiskEvents, SigninLogs and AADRiskyUsers (Sentinel tables).
+// Risk data requires Microsoft Entra ID P2 (Identity Protection). Without it, sign-in risk levels show as "hidden" and no rows are returned.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all users, all risk types, levels and states).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com"] (matches the user principal name)
+let TargetRiskTypes = dynamic([]);      // Example: ["unfamiliarFeatures", "anonymizedIPAddress", "leakedCredentials"]
+let TargetRiskLevels = dynamic([]);     // Example: ["high", "medium"] (low, medium, high)
+let TargetRiskStates = dynamic([]);     // Example: ["atRisk", "confirmedCompromised"] (atRisk, confirmedCompromised, remediated, dismissed, confirmedSafe)
+//
+// ----- Part 1: Risk detections (AADUserRiskEvents) with the matching sign-in -----
+//
+let SignInDetails = SigninLogs
+    | where TimeGenerated between ((StartTime - 1d) .. (EndTime + 1d))
+    | summarize arg_max(TimeGenerated, AppDisplayName, ResultType, ClientAppUsed) by CorrelationId;
+let Detections = AADUserRiskEvents
+    | where TimeGenerated between (StartTime .. EndTime)
+    | join kind=leftouter SignInDetails on CorrelationId
+    | project TimeGenerated, LogType = "Risk detection", UserPrincipalName, UserId, RiskEventType, RiskLevel, RiskState, RiskDetail,
+        DetectionTimingType, IPAddress = IpAddress,
+        Location = iff(isempty(tostring(Location.countryOrRegion)), "", strcat(tostring(Location.city), ", ", tostring(Location.state), ", ", tostring(Location.countryOrRegion))),
+        AppDisplayName, ResultType, ClientAppUsed,
+        DetectionSource = Source, CorrelationId;
+//
+// ----- Part 2: Sign-ins that Entra flagged as risky (SigninLogs) -----
+//
+let RiskySignIns = SigninLogs
+    | where TimeGenerated between (StartTime .. EndTime)
+    | where RiskLevelDuringSignIn in~ ("low", "medium", "high") or RiskLevelAggregated in~ ("low", "medium", "high")
+    | project TimeGenerated, LogType = "Risky sign-in", UserPrincipalName, UserId,
+        RiskEventType = replace_regex(tostring(RiskEventTypes_V2), @'[\[\]"]', ""), RiskLevel = iff(RiskLevelDuringSignIn in~ ("low", "medium", "high"), RiskLevelDuringSignIn, RiskLevelAggregated),
+        RiskState, RiskDetail, DetectionTimingType = "", IPAddress, Location, AppDisplayName, ResultType, ClientAppUsed,
+        DetectionSource = "SigninLogs", CorrelationId;
+//
+// ----- Part 3: Add the user's current risk state, filter, and output -----
+//
+let CurrentUserRisk = AADRiskyUsers
+    | summarize arg_max(TimeGenerated, UserRiskState = RiskState, UserRiskLevel = RiskLevel) by UserId = Id
+    | project UserId, UserRiskState, UserRiskLevel;
+union Detections, RiskySignIns
+| where (array_length(TargetUsers) == 0 or UserPrincipalName in~ (TargetUsers))
+| where (array_length(TargetRiskTypes) == 0 or RiskEventType has_any (TargetRiskTypes))
+| where (array_length(TargetRiskLevels) == 0 or RiskLevel in~ (TargetRiskLevels))
+| where (array_length(TargetRiskStates) == 0 or RiskState in~ (TargetRiskStates))
+| join kind=leftouter CurrentUserRisk on UserId
+| project TimeGenerated, UserPrincipalName, LogType, RiskEventType, RiskLevel, RiskState, RiskDetail, DetectionTimingType,
+    IPAddress, Location, AppDisplayName, ResultType, ClientAppUsed, UserRiskState, UserRiskLevel, DetectionSource, UserId, CorrelationId
+| top 1000 by TimeGenerated desc

@@ -1,0 +1,55 @@
+// Windows Privileged Logons
+// Objective: Shows logons where special privileges were assigned to the new session (administrator-level logons), with the account, the privileges
+// granted, the computer, and how the session logged on (logon type, source IP, workstation, authentication package). Raw events, one row per privileged logon.
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+// Source: SecurityEvent (Windows Security log). 4672 special privileges assigned to new logon, matched to the 4624 logon by computer and logon ID.
+// Audit policy: Logon/Logoff > Audit Special Logon (Success) and Audit Logon (Success).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all accounts, all computers, all privileges).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+let TargetComputers = dynamic([]);      // Example: ["dc01", "pc01"] (case-insensitive whole-word match on the computer name)
+let TargetPrivileges = dynamic([]);     // Example: ["SeDebugPrivilege", "SeTcbPrivilege"] (rows that were granted any of these privileges)
+let ExcludeSystemAndMachineAccounts = false;  // Set to true to hide computer accounts and built-in service sessions (SYSTEM, LOCAL SERVICE, NETWORK SERVICE, DWM, UMFD)
+//
+// ----- Part 1: Find privileged logons (4672) -----
+//
+let PrivilegedLogons = SecurityEvent
+    | where TimeGenerated between (StartTime .. EndTime)
+    | where EventID == 4672
+    | where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+    | where (array_length(TargetUsers) == 0 or SubjectUserName in~ (TargetUsers)
+        or strcat(SubjectDomainName, "\\", SubjectUserName) in~ (TargetUsers) or SubjectUserSid in~ (TargetUsers))
+    | where (array_length(TargetPrivileges) == 0 or PrivilegeList has_any (TargetPrivileges))
+    | where ExcludeSystemAndMachineAccounts == false
+        or not(SubjectUserName endswith "$" or SubjectDomainName in~ ("NT AUTHORITY", "Window Manager", "Font Driver Host"))
+    | project TimeGenerated, Computer, SubjectUserName, SubjectDomainName, SubjectUserSid, SubjectLogonId, PrivilegeList
+    | top 1000 by TimeGenerated desc
+    | serialize
+    | extend RowId = row_number();
+//
+// ----- Part 2: Add how each session logged on (the latest 4624 with the same computer and logon ID, at or just before the 4672) -----
+// The 4672 is often written a fraction of a second before its 4624, so a 1 second tolerance is allowed. Reused logon IDs (for example 0x3e7 SYSTEM) match the most recent logon only.
+//
+let LogonDetails = PrivilegedLogons
+    | project RowId, Computer, SubjectLogonId, PrivilegeTime = TimeGenerated
+    | join kind=inner (
+        SecurityEvent
+        | where TimeGenerated between ((StartTime - 1h) .. (EndTime + 1m))
+        | where EventID == 4624
+        | project Computer, TargetLogonId, LogonTime = TimeGenerated, LogonTypeName, IpAddress, WorkstationName, AuthenticationPackageName, LogonProcessName
+    ) on Computer, $left.SubjectLogonId == $right.TargetLogonId
+    | where LogonTime <= PrivilegeTime + 1s
+    | summarize arg_max(LogonTime, LogonTypeName, IpAddress, WorkstationName, AuthenticationPackageName, LogonProcessName) by RowId;
+//
+// ----- Part 3: Output -----
+//
+PrivilegedLogons
+| join kind=leftouter LogonDetails on RowId
+| project TimeGenerated, UserName = SubjectUserName, UserDomain = SubjectDomainName, Computer, LogonTypeName, IpAddress, WorkstationName,
+    AuthenticationPackageName, LogonProcessName, Privileges = replace_regex(PrivilegeList, @"\s+", ", "),
+    SubjectLogonId, UserSid = SubjectUserSid
+| top 1000 by TimeGenerated desc

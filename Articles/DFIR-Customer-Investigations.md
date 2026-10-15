@@ -625,4 +625,317 @@ Results are observed events, not complete mailbox or file contents.
 > ```
 > </details>
 
+> <details>
+> <summary>✅ <strong>Windows account logons and logoffs</strong></summary>
+>
+> Query file: [Windows/SecurityEvent/Windows-logon-and-logoff-events.kql](../Windows/SecurityEvent/Windows-logon-and-logoff-events.kql).
+>
+> ```kql
+> // Windows Account Logons and Logoffs
+> // Objective: Shows who logged on, failed to log on, or logged off a Windows computer, with the account, logon type, source IP and workstation,
+> // authentication package, failure reason, and (for explicit-credential logons) the account whose credentials were used. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: SecurityEvent (Windows Security log, collected by the Windows Security Events connector / Azure Monitor Agent).
+> // Event IDs: 4624 logon, 4625 failed logon, 4634 logoff, 4647 user-initiated logoff, 4648 logon using explicit credentials.
+> // Audit policy: Logon/Logoff > Audit Logon (Success, Failure), Audit Logoff (Success), Audit Other Logon/Logoff Events (Success).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all computers, all five event IDs, all logon types).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetComputers = dynamic([]);      // Example: ["dc01", "pc01"] (case-insensitive whole-word match on the computer name)
+> let TargetEventIDs = dynamic([]);       // Example: [4625] (4624, 4625, 4634, 4647, 4648; empty = all five)
+> let TargetLogonTypes = dynamic([]);     // Example: [2, 10] (2 Interactive, 3 Network, 4 Batch, 5 Service, 7 Unlock, 8 NetworkCleartext, 9 NewCredentials, 10 RemoteInteractive, 11 CachedInteractive). Events without a logon type (4647, 4648) are hidden when this is set.
+> let ExcludeMachineAccounts = false;     // Set to true to hide computer accounts (names ending in $)
+> //
+> // ----- Part 1: Filter Windows logon and logoff events -----
+> //
+> SecurityEvent
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where EventID in (4624, 4625, 4634, 4647, 4648)
+> | where (array_length(TargetEventIDs) == 0 or EventID in (TargetEventIDs))
+> | where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+> | where (array_length(TargetLogonTypes) == 0 or LogonType in (TargetLogonTypes))
+> // For 4648 the account that ran the process is the Subject; for every other event the account is the Target.
+> | extend UserName = iff(EventID == 4648, SubjectUserName, TargetUserName),
+>     UserDomain = iff(EventID == 4648, SubjectDomainName, TargetDomainName),
+>     UserSid = iff(EventID == 4648, SubjectUserSid, TargetUserSid)
+> | where (array_length(TargetUsers) == 0 or UserName in~ (TargetUsers)
+>     or strcat(UserDomain, "\\", UserName) in~ (TargetUsers) or UserSid in~ (TargetUsers))
+> | where ExcludeMachineAccounts == false or UserName !endswith "$"
+> //
+> // ----- Part 2: Output -----
+> //
+> | extend Event = case(
+>         EventID == 4624, "Logon",
+>         EventID == 4625, "Failed logon",
+>         EventID == 4634, "Logoff",
+>         EventID == 4647, "User-initiated logoff",
+>         "Logon with explicit credentials"),
+>     FailureReasonText = iff(EventID != 4625, "", case(
+>         tolower(SubStatus) == "0xc0000064", "User name does not exist",
+>         tolower(SubStatus) == "0xc000006a", "Wrong password",
+>         tolower(SubStatus) == "0xc000006d", "Bad user name or authentication information",
+>         tolower(SubStatus) == "0xc000006e", "Account restriction",
+>         tolower(SubStatus) == "0xc000006f", "Logon outside allowed hours",
+>         tolower(SubStatus) == "0xc0000070", "Workstation restriction",
+>         tolower(SubStatus) == "0xc0000071", "Password expired",
+>         tolower(SubStatus) == "0xc0000072", "Account disabled",
+>         tolower(SubStatus) == "0xc000015b", "Logon type not granted",
+>         tolower(SubStatus) == "0xc0000193", "Account expired",
+>         tolower(SubStatus) == "0xc0000224", "Password must change at next logon",
+>         tolower(SubStatus) == "0xc0000234", "Account locked out",
+>         strcat("Status ", Status, " / SubStatus ", SubStatus))),
+>     CredentialsUsedFor = iff(EventID == 4648, strcat(TargetDomainName, "\\", TargetUserName), "")
+> | project TimeGenerated, UserName, UserDomain, EventID, Event, LogonTypeName, Computer, IpAddress, WorkstationName,
+>     AuthenticationPackageName, LogonProcessName, FailureReasonText, Status, SubStatus, CredentialsUsedFor,
+>     TargetServerName, ProcessName, TargetLogonId, SubjectLogonId, UserSid
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Windows privileged logons</strong></summary>
+>
+> Query file: [Windows/SecurityEvent/Windows-privileged-logons.kql](../Windows/SecurityEvent/Windows-privileged-logons.kql).
+>
+> ```kql
+> // Windows Privileged Logons
+> // Objective: Shows logons where special privileges were assigned to the new session (administrator-level logons), with the account, the privileges
+> // granted, the computer, and how the session logged on (logon type, source IP, workstation, authentication package). Raw events, one row per privileged logon.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: SecurityEvent (Windows Security log). 4672 special privileges assigned to new logon, matched to the 4624 logon by computer and logon ID.
+> // Audit policy: Logon/Logoff > Audit Special Logon (Success) and Audit Logon (Success).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all computers, all privileges).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetComputers = dynamic([]);      // Example: ["dc01", "pc01"] (case-insensitive whole-word match on the computer name)
+> let TargetPrivileges = dynamic([]);     // Example: ["SeDebugPrivilege", "SeTcbPrivilege"] (rows that were granted any of these privileges)
+> let ExcludeSystemAndMachineAccounts = false;  // Set to true to hide computer accounts and built-in service sessions (SYSTEM, LOCAL SERVICE, NETWORK SERVICE, DWM, UMFD)
+> //
+> // ----- Part 1: Find privileged logons (4672) -----
+> //
+> let PrivilegedLogons = SecurityEvent
+>     | where TimeGenerated between (StartTime .. EndTime)
+>     | where EventID == 4672
+>     | where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+>     | where (array_length(TargetUsers) == 0 or SubjectUserName in~ (TargetUsers)
+>         or strcat(SubjectDomainName, "\\", SubjectUserName) in~ (TargetUsers) or SubjectUserSid in~ (TargetUsers))
+>     | where (array_length(TargetPrivileges) == 0 or PrivilegeList has_any (TargetPrivileges))
+>     | where ExcludeSystemAndMachineAccounts == false
+>         or not(SubjectUserName endswith "$" or SubjectDomainName in~ ("NT AUTHORITY", "Window Manager", "Font Driver Host"))
+>     | project TimeGenerated, Computer, SubjectUserName, SubjectDomainName, SubjectUserSid, SubjectLogonId, PrivilegeList
+>     | top 1000 by TimeGenerated desc
+>     | serialize
+>     | extend RowId = row_number();
+> //
+> // ----- Part 2: Add how each session logged on (the latest 4624 with the same computer and logon ID, at or just before the 4672) -----
+> // The 4672 is often written a fraction of a second before its 4624, so a 1 second tolerance is allowed. Reused logon IDs (for example 0x3e7 SYSTEM) match the most recent logon only.
+> //
+> let LogonDetails = PrivilegedLogons
+>     | project RowId, Computer, SubjectLogonId, PrivilegeTime = TimeGenerated
+>     | join kind=inner (
+>         SecurityEvent
+>         | where TimeGenerated between ((StartTime - 1h) .. (EndTime + 1m))
+>         | where EventID == 4624
+>         | project Computer, TargetLogonId, LogonTime = TimeGenerated, LogonTypeName, IpAddress, WorkstationName, AuthenticationPackageName, LogonProcessName
+>     ) on Computer, $left.SubjectLogonId == $right.TargetLogonId
+>     | where LogonTime <= PrivilegeTime + 1s
+>     | summarize arg_max(LogonTime, LogonTypeName, IpAddress, WorkstationName, AuthenticationPackageName, LogonProcessName) by RowId;
+> //
+> // ----- Part 3: Output -----
+> //
+> PrivilegedLogons
+> | join kind=leftouter LogonDetails on RowId
+> | project TimeGenerated, UserName = SubjectUserName, UserDomain = SubjectDomainName, Computer, LogonTypeName, IpAddress, WorkstationName,
+>     AuthenticationPackageName, LogonProcessName, Privileges = replace_regex(PrivilegeList, @"\s+", ", "),
+>     SubjectLogonId, UserSid = SubjectUserSid
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Windows Kerberos and NTLM authentication</strong></summary>
+>
+> Query file: [Windows/SecurityEvent/Windows-kerberos-and-ntlm-authentication-events.kql](../Windows/SecurityEvent/Windows-kerberos-and-ntlm-authentication-events.kql).
+>
+> ```kql
+> // Windows Kerberos and NTLM Authentication
+> // Objective: Shows credential validation by domain controllers: Kerberos ticket requests (successful and failed pre-authentication) and NTLM
+> // validations, with the account, the source IP or workstation, the service requested, and a readable result. Surfaces password spray and brute force.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: SecurityEvent (Windows Security log on domain controllers).
+> // Event IDs: 4768 Kerberos TGT requested, 4771 Kerberos pre-authentication failed, 4776 NTLM credential validation.
+> // Audit policy: Account Logon > Audit Kerberos Authentication Service (Success, Failure) and Audit Credential Validation (Success, Failure).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all domain controllers, all three event IDs, successes and failures).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "jdoe@contoso.com", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetComputers = dynamic([]);      // Example: ["dc01"] (the domain controller that handled the request; case-insensitive whole-word match)
+> let TargetEventIDs = dynamic([]);       // Example: [4771, 4776] (4768, 4771, 4776; empty = all three)
+> let TargetStatusCodes = dynamic([]);    // Example: ["0x18", "0xc000006a"] (Kerberos or NTLM status codes; empty = all, success included)
+> let ExcludeMachineAccounts = false;     // Set to true to hide computer accounts (names ending in $)
+> //
+> // ----- Part 1: Filter Kerberos and NTLM events -----
+> //
+> SecurityEvent
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where EventID in (4768, 4771, 4776)
+> | where (array_length(TargetEventIDs) == 0 or EventID in (TargetEventIDs))
+> | where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+> | where (array_length(TargetStatusCodes) == 0 or Status in~ (TargetStatusCodes))
+> | where (array_length(TargetUsers) == 0 or TargetUserName in~ (TargetUsers)
+>     or strcat(TargetDomainName, "\\", TargetUserName) in~ (TargetUsers) or TargetSid in~ (TargetUsers))
+> | where ExcludeMachineAccounts == false or TargetUserName !endswith "$"
+> //
+> // ----- Part 2: Output -----
+> //
+> | extend Protocol = iff(EventID == 4776, "NTLM", "Kerberos"),
+>     Event = case(
+>         EventID == 4768, "Kerberos TGT requested",
+>         EventID == 4771, "Kerberos pre-authentication failed",
+>         "NTLM credential validation"),
+>     SourceIP = replace_string(IpAddress, "::ffff:", ""),
+>     ResultText = case(
+>         tolower(Status) == "0x0", "Success",
+>         tolower(Status) == "0x6", "Kerberos: client not found in database (unknown user)",
+>         tolower(Status) == "0x7", "Kerberos: server not found in database",
+>         tolower(Status) == "0xc", "Kerberos: logon time or workstation restriction",
+>         tolower(Status) == "0x12", "Kerberos: account disabled, expired, locked out, or logon hours restricted",
+>         tolower(Status) == "0x17", "Kerberos: password expired",
+>         tolower(Status) == "0x18", "Kerberos: pre-authentication failed (wrong password)",
+>         tolower(Status) == "0x25", "Kerberos: clock skew too great",
+>         tolower(Status) == "0xc0000064", "NTLM: user name does not exist",
+>         tolower(Status) == "0xc000006a", "NTLM: wrong password",
+>         tolower(Status) == "0xc000006f", "NTLM: logon outside allowed hours",
+>         tolower(Status) == "0xc0000070", "NTLM: workstation restriction",
+>         tolower(Status) == "0xc0000071", "NTLM: password expired",
+>         tolower(Status) == "0xc0000072", "NTLM: account disabled",
+>         tolower(Status) == "0xc0000234", "NTLM: account locked out",
+>         strcat("Status ", Status))
+> | project TimeGenerated, UserName = TargetUserName, UserDomain = TargetDomainName, EventID, Event, Protocol, ResultText, Status,
+>     Computer, SourceIP, SourceWorkstation = Workstation, ServiceName, UserSid = TargetSid
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Entra risky users and sign-ins</strong></summary>
+>
+> Query file: [Entra/User-risk-events.kql](../Entra/User-risk-events.kql).
+>
+> ```kql
+> // Entra User Risk Events and Risky Sign-ins
+> // Objective: Shows risky Microsoft Entra ID activity for users: Identity Protection risk detections (for example unfamiliar sign-in properties,
+> // anonymous IP, leaked credentials) and sign-ins that Entra flagged as risky, with the user, risk type, risk level, state, IP address,
+> // location and application, plus the user's current risk state. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). Sources: AADUserRiskEvents, SigninLogs and AADRiskyUsers (Sentinel tables).
+> // Risk data requires Microsoft Entra ID P2 (Identity Protection). Without it, sign-in risk levels show as "hidden" and no rows are returned.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, all risk types, levels and states).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com"] (matches the user principal name)
+> let TargetRiskTypes = dynamic([]);      // Example: ["unfamiliarFeatures", "anonymizedIPAddress", "leakedCredentials"]
+> let TargetRiskLevels = dynamic([]);     // Example: ["high", "medium"] (low, medium, high)
+> let TargetRiskStates = dynamic([]);     // Example: ["atRisk", "confirmedCompromised"] (atRisk, confirmedCompromised, remediated, dismissed, confirmedSafe)
+> //
+> // ----- Part 1: Risk detections (AADUserRiskEvents) with the matching sign-in -----
+> //
+> let SignInDetails = SigninLogs
+>     | where TimeGenerated between ((StartTime - 1d) .. (EndTime + 1d))
+>     | summarize arg_max(TimeGenerated, AppDisplayName, ResultType, ClientAppUsed) by CorrelationId;
+> let Detections = AADUserRiskEvents
+>     | where TimeGenerated between (StartTime .. EndTime)
+>     | join kind=leftouter SignInDetails on CorrelationId
+>     | project TimeGenerated, LogType = "Risk detection", UserPrincipalName, UserId, RiskEventType, RiskLevel, RiskState, RiskDetail,
+>         DetectionTimingType, IPAddress = IpAddress,
+>         Location = iff(isempty(tostring(Location.countryOrRegion)), "", strcat(tostring(Location.city), ", ", tostring(Location.state), ", ", tostring(Location.countryOrRegion))),
+>         AppDisplayName, ResultType, ClientAppUsed,
+>         DetectionSource = Source, CorrelationId;
+> //
+> // ----- Part 2: Sign-ins that Entra flagged as risky (SigninLogs) -----
+> //
+> let RiskySignIns = SigninLogs
+>     | where TimeGenerated between (StartTime .. EndTime)
+>     | where RiskLevelDuringSignIn in~ ("low", "medium", "high") or RiskLevelAggregated in~ ("low", "medium", "high")
+>     | project TimeGenerated, LogType = "Risky sign-in", UserPrincipalName, UserId,
+>         RiskEventType = replace_regex(tostring(RiskEventTypes_V2), @'[\[\]"]', ""), RiskLevel = iff(RiskLevelDuringSignIn in~ ("low", "medium", "high"), RiskLevelDuringSignIn, RiskLevelAggregated),
+>         RiskState, RiskDetail, DetectionTimingType = "", IPAddress, Location, AppDisplayName, ResultType, ClientAppUsed,
+>         DetectionSource = "SigninLogs", CorrelationId;
+> //
+> // ----- Part 3: Add the user's current risk state, filter, and output -----
+> //
+> let CurrentUserRisk = AADRiskyUsers
+>     | summarize arg_max(TimeGenerated, UserRiskState = RiskState, UserRiskLevel = RiskLevel) by UserId = Id
+>     | project UserId, UserRiskState, UserRiskLevel;
+> union Detections, RiskySignIns
+> | where (array_length(TargetUsers) == 0 or UserPrincipalName in~ (TargetUsers))
+> | where (array_length(TargetRiskTypes) == 0 or RiskEventType has_any (TargetRiskTypes))
+> | where (array_length(TargetRiskLevels) == 0 or RiskLevel in~ (TargetRiskLevels))
+> | where (array_length(TargetRiskStates) == 0 or RiskState in~ (TargetRiskStates))
+> | join kind=leftouter CurrentUserRisk on UserId
+> | project TimeGenerated, UserPrincipalName, LogType, RiskEventType, RiskLevel, RiskState, RiskDetail, DetectionTimingType,
+>     IPAddress, Location, AppDisplayName, ResultType, ClientAppUsed, UserRiskState, UserRiskLevel, DetectionSource, UserId, CorrelationId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Entra application and managed identity sign-ins</strong></summary>
+>
+> Query file: [Entra/Workload-identity-sign-ins.kql](../Entra/Workload-identity-sign-ins.kql).
+>
+> ```kql
+> // Entra Application and Managed Identity Sign-ins
+> // Objective: Shows every sign-in by a service principal (application) or managed identity in Microsoft Entra ID, with the identity, the app,
+> // the resource it signed in to, outcome, source IP and location, and the credential type used (secret, certificate, federated). Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). Sources: AADServicePrincipalSignInLogs and AADManagedIdentitySignInLogs (Sentinel tables).
+> // These are non-human sign-ins and are far more numerous than user sign-ins.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all identities, all apps, successes and failures).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetIdentities = dynamic([]);     // Example: ["MyAutomationApp", "vm-prod-01"] (service principal or managed identity display name)
+> let TargetAppIds = dynamic([]);         // Example: ["00000000-0000-0000-0000-000000000000"]
+> let TargetResults = dynamic([]);        // Example: ["700027", "7000222"] (result codes; "0" is success; empty = all)
+> let TargetIdentityTypes = dynamic([]);  // Example: ["Managed identity"] (Service principal, Managed identity; empty = both)
+> //
+> // ----- Part 1: Combine service principal and managed identity sign-ins -----
+> //
+> union
+>     (AADServicePrincipalSignInLogs
+>         | where TimeGenerated between (StartTime .. EndTime)
+>         | extend IdentityType = "Service principal"),
+>     (AADManagedIdentitySignInLogs
+>         | where TimeGenerated between (StartTime .. EndTime)
+>         | extend IdentityType = "Managed identity")
+> | where (array_length(TargetIdentityTypes) == 0 or IdentityType in~ (TargetIdentityTypes))
+> | where (array_length(TargetIdentities) == 0 or ServicePrincipalName in~ (TargetIdentities))
+> | where (array_length(TargetAppIds) == 0 or AppId in~ (TargetAppIds))
+> | where (array_length(TargetResults) == 0 or ResultType in (TargetResults))
+> //
+> // ----- Part 2: Output -----
+> //
+> | extend Outcome = iff(ResultType == "0", "Success", "Failure")
+> | project TimeGenerated, ServicePrincipalName, IdentityType, Outcome, ResultType, ResultDescription, AppId, ServicePrincipalId,
+>     ResourceDisplayName, IPAddress, Location, ClientCredentialType, FederatedCredentialId, ConditionalAccessStatus,
+>     UserAgent, CorrelationId, Id
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
 </details>

@@ -1,0 +1,51 @@
+// Windows Network Share File Activity
+// Objective: Shows files and folders being opened over a network share, with who did it, the share, the file path inside the share, the client IP and what kind of access was requested (read or download, write or upload or modify, delete).
+// Raw events, one row per access check. This is high volume: every file open on the share writes events. The event records the access that was requested; it is not a copy of the file.
+// A write cannot be split into upload versus modify from this event alone: a write to a path that did not exist is an upload, a write to an existing file is a modify. Use the file path and the time to tell them apart.
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+// Source: SecurityEvent (Windows Security log). 5145 a network share object was checked to see whether the client can be granted the desired access.
+// Audit policy: Object Access > Audit Detailed File Share (Success and Failure). It is off by default and very noisy. Without it this query returns nothing.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all accounts, all computers, all shares, all files, all client IPs, all kinds of access).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+let TargetComputers = dynamic([]);      // Example: ["fs01", "dc01"] (case-insensitive whole-word match on the computer that hosts the share)
+let TargetShares = dynamic([]);         // Example: ["Finance", "HR$"] (whole-word match on the share name, which is stored as \\*\Finance)
+let TargetFileKeywords = dynamic([]);   // Example: ["payroll", "zip", "passwords.xlsx"] (whole-word match inside the file path within the share: "payroll" finds payroll\2026.xlsx, "pay" does not)
+let TargetClientIPs = dynamic([]);      // Example: ["10.1.1.25"] (the IP address the file was accessed from)
+let TargetAccess = dynamic([]);         // Example: ["Read"], ["Write"], ["Delete"] or ["Read", "Write"]
+let HideIpcShare = true;                // Set to false to also show IPC$ (named pipe traffic, which is most of the volume and is not file access)
+//
+// ----- Part 1: Filter share file access events (5145) -----
+//
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID == 5145
+| where HideIpcShare == false or ShareName !endswith "IPC$"
+| where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+| where (array_length(TargetUsers) == 0 or SubjectUserName in~ (TargetUsers)
+    or strcat(SubjectDomainName, "\\", SubjectUserName) in~ (TargetUsers) or SubjectUserSid in~ (TargetUsers))
+| where (array_length(TargetShares) == 0 or ShareName has_any (TargetShares))
+| where (array_length(TargetFileKeywords) == 0 or RelativeTargetName has_any (TargetFileKeywords))
+| where (array_length(TargetClientIPs) == 0 or IpAddress in (TargetClientIPs))
+//
+// ----- Part 2: Say what kind of access was requested -----
+// AccessMask is a bit field: 0x1 read data or list folder, 0x2 write data or add file, 0x4 append data or add folder, 0x40 delete child, 0x10000 delete.
+//
+| extend Mask = tolong(AccessMask)
+| extend AccessKind = case(
+    binary_and(Mask, 0x10000) != 0 or binary_and(Mask, 0x40) != 0, "Delete",
+    binary_and(Mask, 0x2) != 0 or binary_and(Mask, 0x4) != 0, "Write",
+    binary_and(Mask, 0x1) != 0, "Read",
+    "Other")
+| where (array_length(TargetAccess) == 0 or AccessKind in~ (TargetAccess))
+| extend AccessRequested = replace_regex(trim(@"\s+", extract(@'(?i)<Data Name="AccessList">([^<]*)</Data>', 1, EventData)), @"\s+", ", ")
+//
+// ----- Part 3: Output -----
+//
+| project TimeGenerated, Computer, UserName = SubjectUserName, UserDomain = SubjectDomainName, ShareName, FilePath = RelativeTargetName, AccessKind,
+    ClientIP = IpAddress, ClientPort = IpPort, AccessMask, AccessRequested, ShareLocalPath, UserSid = SubjectUserSid, SubjectLogonId
+| top 1000 by TimeGenerated desc

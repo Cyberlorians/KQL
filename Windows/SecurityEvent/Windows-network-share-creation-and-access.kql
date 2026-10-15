@@ -1,0 +1,36 @@
+// Windows Network Share Creation and Access
+// Objective: Shows network shares being created on a Windows computer and users connecting to a share, with who did it, the share name and local path, and the client IP the connection came from.
+// Raw events, one row per share event. A 5140 is written once when a client connects to a share, not for every file opened (see Windows-network-share-file-activity.kql for files).
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+// Source: SecurityEvent (Windows Security log). 5142 a network share object was added, 5140 a network share object was accessed.
+// Audit policy: Object Access > Audit File Share (Success). Without it the Windows events below are never written and this query returns nothing.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all accounts, all computers, all shares, all client IPs, creation and access).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+let TargetComputers = dynamic([]);      // Example: ["fs01", "dc01"] (case-insensitive whole-word match on the computer that hosts the share)
+let TargetShares = dynamic([]);         // Example: ["Finance", "HR$"] (whole-word match on the share name, which is stored as \\*\Finance)
+let TargetClientIPs = dynamic([]);      // Example: ["10.1.1.25"] (the IP address the share connection came from; only 5140 access events carry one)
+let TargetActions = dynamic([]);        // Example: ["Share created"] or ["Share accessed"]
+//
+// ----- Part 1: Filter share creation (5142) and share access (5140) events -----
+//
+SecurityEvent
+| where TimeGenerated between (StartTime .. EndTime)
+| where EventID in (5142, 5140)
+| where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+| where (array_length(TargetUsers) == 0 or SubjectUserName in~ (TargetUsers)
+    or strcat(SubjectDomainName, "\\", SubjectUserName) in~ (TargetUsers) or SubjectUserSid in~ (TargetUsers))
+| where (array_length(TargetShares) == 0 or ShareName has_any (TargetShares))
+| where (array_length(TargetClientIPs) == 0 or IpAddress in (TargetClientIPs))
+| extend ShareAction = iff(EventID == 5142, "Share created", "Share accessed")
+| where (array_length(TargetActions) == 0 or ShareAction in~ (TargetActions))
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, Computer, ShareAction, ShareName, ShareLocalPath, UserName = SubjectUserName, UserDomain = SubjectDomainName,
+    ClientIP = IpAddress, ClientPort = IpPort, IsAdminShare = ShareName endswith "$", UserSid = SubjectUserSid, SubjectLogonId, EventID
+| top 1000 by TimeGenerated desc

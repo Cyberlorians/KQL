@@ -1723,7 +1723,159 @@ Results are observed events, not complete mailbox or file contents.
 <details>
 <summary><strong>User Network Share Activity</strong></summary>
 
-No queries added yet.
+> <details>
+> <summary><strong>Windows network share creation and access</strong></summary>
+>
+> Query file: [Windows/SecurityEvent/Windows-network-share-creation-and-access.kql](../Windows/SecurityEvent/Windows-network-share-creation-and-access.kql).
+>
+> ```kql
+> // Windows Network Share Creation and Access
+> // Objective: Shows network shares being created on a Windows computer and users connecting to a share, with who did it, the share name and local path, and the client IP the connection came from.
+> // Raw events, one row per share event. A 5140 is written once when a client connects to a share, not for every file opened (see Windows-network-share-file-activity.kql for files).
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: SecurityEvent (Windows Security log). 5142 a network share object was added, 5140 a network share object was accessed.
+> // Audit policy: Object Access > Audit File Share (Success). Without it the Windows events below are never written and this query returns nothing.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all computers, all shares, all client IPs, creation and access).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetComputers = dynamic([]);      // Example: ["fs01", "dc01"] (case-insensitive whole-word match on the computer that hosts the share)
+> let TargetShares = dynamic([]);         // Example: ["Finance", "HR$"] (whole-word match on the share name, which is stored as \\*\Finance)
+> let TargetClientIPs = dynamic([]);      // Example: ["10.1.1.25"] (the IP address the share connection came from; only 5140 access events carry one)
+> let TargetActions = dynamic([]);        // Example: ["Share created"] or ["Share accessed"]
+> //
+> // ----- Part 1: Filter share creation (5142) and share access (5140) events -----
+> //
+> SecurityEvent
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where EventID in (5142, 5140)
+> | where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+> | where (array_length(TargetUsers) == 0 or SubjectUserName in~ (TargetUsers)
+>     or strcat(SubjectDomainName, "\\", SubjectUserName) in~ (TargetUsers) or SubjectUserSid in~ (TargetUsers))
+> | where (array_length(TargetShares) == 0 or ShareName has_any (TargetShares))
+> | where (array_length(TargetClientIPs) == 0 or IpAddress in (TargetClientIPs))
+> | extend ShareAction = iff(EventID == 5142, "Share created", "Share accessed")
+> | where (array_length(TargetActions) == 0 or ShareAction in~ (TargetActions))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, Computer, ShareAction, ShareName, ShareLocalPath, UserName = SubjectUserName, UserDomain = SubjectDomainName,
+>     ClientIP = IpAddress, ClientPort = IpPort, IsAdminShare = ShareName endswith "$", UserSid = SubjectUserSid, SubjectLogonId, EventID
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary><strong>Windows network share permission changes</strong></summary>
+>
+> Query file: [Windows/SecurityEvent/Windows-network-share-permission-changes.kql](../Windows/SecurityEvent/Windows-network-share-permission-changes.kql).
+>
+> ```kql
+> // Windows Network Share Permission Changes
+> // Objective: Shows changes to who can use a network share and what they can do, with who made the change, the share or file path, and the permissions before and after (as security descriptors).
+> // Raw events, one row per change. PermissionsChanged is true when the before and after permissions differ (a share can also be edited without changing permissions, for example a comment or user limit).
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: SecurityEvent (Windows Security log). 5143 a network share object was modified (share permissions), 4670 permissions on an object were changed (file and folder permissions).
+> // Audit policy: Object Access > Audit File Share (Success) for 5143, and Object Access > Audit File System (Success) with an audit rule on the folder for 4670. Without them this query returns nothing.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all computers, all shares and paths, share and file permission changes).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (the account that made the change; matches account name, DOMAIN\name, or SID)
+> let TargetComputers = dynamic([]);      // Example: ["fs01", "dc01"] (case-insensitive whole-word match on the computer name)
+> let TargetShares = dynamic([]);         // Example: ["Finance", "D:\\Shares\\Finance"] (whole-word match on the share name, share folder or file path that was changed)
+> let TargetChangeTypes = dynamic([]);    // Example: ["Share permissions"] or ["File or folder permissions"]
+> //
+> // ----- Part 1: Filter permission change events (5143 share, 4670 file and folder) -----
+> // The before and after permissions are not their own columns in SecurityEvent, so they are read from the event data by field name.
+> //
+> SecurityEvent
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where EventID == 5143 or (EventID == 4670 and ObjectType in~ ("File", "Directory"))
+> | where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+> | where (array_length(TargetUsers) == 0 or SubjectUserName in~ (TargetUsers)
+>     or strcat(SubjectDomainName, "\\", SubjectUserName) in~ (TargetUsers) or SubjectUserSid in~ (TargetUsers))
+> | extend ChangeType = iff(EventID == 5143, "Share permissions", "File or folder permissions")
+> | where (array_length(TargetChangeTypes) == 0 or ChangeType in~ (TargetChangeTypes))
+> | extend ChangedObject = iff(EventID == 5143, ShareName, ObjectName)
+> | extend ChangedPath = iff(EventID == 5143, ShareLocalPath, ObjectName)
+> | where (array_length(TargetShares) == 0 or ChangedObject has_any (TargetShares) or ChangedPath has_any (TargetShares))
+> | extend OldPermissions = extract(@'(?i)<Data Name="OldSd">([^<]*)</Data>', 1, EventData)
+> | extend NewPermissions = extract(@'(?i)<Data Name="NewSd">([^<]*)</Data>', 1, EventData)
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, Computer, ChangeType, ShareName = iff(EventID == 5143, ShareName, ""), ChangedPath, ObjectType, UserName = SubjectUserName, UserDomain = SubjectDomainName,
+>     PermissionsChanged = OldPermissions != NewPermissions, OldPermissions, NewPermissions, ProcessName,
+>     UserSid = SubjectUserSid, SubjectLogonId, EventID
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary><strong>Windows network share file activity</strong></summary>
+>
+> Query file: [Windows/SecurityEvent/Windows-network-share-file-activity.kql](../Windows/SecurityEvent/Windows-network-share-file-activity.kql).
+>
+> ```kql
+> // Windows Network Share File Activity
+> // Objective: Shows files and folders being opened over a network share, with who did it, the share, the file path inside the share, the client IP and what kind of access was requested (read or download, write or upload or modify, delete).
+> // Raw events, one row per access check. This is high volume: every file open on the share writes events. The event records the access that was requested; it is not a copy of the file.
+> // A write cannot be split into upload versus modify from this event alone: a write to a path that did not exist is an upload, a write to an existing file is a modify. Use the file path and the time to tell them apart.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: SecurityEvent (Windows Security log). 5145 a network share object was checked to see whether the client can be granted the desired access.
+> // Audit policy: Object Access > Audit Detailed File Share (Success and Failure). It is off by default and very noisy. Without it this query returns nothing.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all computers, all shares, all files, all client IPs, all kinds of access).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches account name, DOMAIN\name, or SID)
+> let TargetComputers = dynamic([]);      // Example: ["fs01", "dc01"] (case-insensitive whole-word match on the computer that hosts the share)
+> let TargetShares = dynamic([]);         // Example: ["Finance", "HR$"] (whole-word match on the share name, which is stored as \\*\Finance)
+> let TargetFileKeywords = dynamic([]);   // Example: ["payroll", "zip", "passwords.xlsx"] (whole-word match inside the file path within the share: "payroll" finds payroll\2026.xlsx, "pay" does not)
+> let TargetClientIPs = dynamic([]);      // Example: ["10.1.1.25"] (the IP address the file was accessed from)
+> let TargetAccess = dynamic([]);         // Example: ["Read"], ["Write"], ["Delete"] or ["Read", "Write"]
+> let HideIpcShare = true;                // Set to false to also show IPC$ (named pipe traffic, which is most of the volume and is not file access)
+> //
+> // ----- Part 1: Filter share file access events (5145) -----
+> //
+> SecurityEvent
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where EventID == 5145
+> | where HideIpcShare == false or ShareName !endswith "IPC$"
+> | where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+> | where (array_length(TargetUsers) == 0 or SubjectUserName in~ (TargetUsers)
+>     or strcat(SubjectDomainName, "\\", SubjectUserName) in~ (TargetUsers) or SubjectUserSid in~ (TargetUsers))
+> | where (array_length(TargetShares) == 0 or ShareName has_any (TargetShares))
+> | where (array_length(TargetFileKeywords) == 0 or RelativeTargetName has_any (TargetFileKeywords))
+> | where (array_length(TargetClientIPs) == 0 or IpAddress in (TargetClientIPs))
+> //
+> // ----- Part 2: Say what kind of access was requested -----
+> // AccessMask is a bit field: 0x1 read data or list folder, 0x2 write data or add file, 0x4 append data or add folder, 0x40 delete child, 0x10000 delete.
+> //
+> | extend Mask = tolong(AccessMask)
+> | extend AccessKind = case(
+>     binary_and(Mask, 0x10000) != 0 or binary_and(Mask, 0x40) != 0, "Delete",
+>     binary_and(Mask, 0x2) != 0 or binary_and(Mask, 0x4) != 0, "Write",
+>     binary_and(Mask, 0x1) != 0, "Read",
+>     "Other")
+> | where (array_length(TargetAccess) == 0 or AccessKind in~ (TargetAccess))
+> | extend AccessRequested = replace_regex(trim(@"\s+", extract(@'(?i)<Data Name="AccessList">([^<]*)</Data>', 1, EventData)), @"\s+", ", ")
+> //
+> // ----- Part 3: Output -----
+> //
+> | project TimeGenerated, Computer, UserName = SubjectUserName, UserDomain = SubjectDomainName, ShareName, FilePath = RelativeTargetName, AccessKind,
+>     ClientIP = IpAddress, ClientPort = IpPort, AccessMask, AccessRequested, ShareLocalPath, UserSid = SubjectUserSid, SubjectLogonId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
 
 </details>
 

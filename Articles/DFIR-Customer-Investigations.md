@@ -1542,7 +1542,136 @@ Results are observed events, not complete mailbox or file contents.
 <details>
 <summary><strong>Web Activity</strong></summary>
 
-No queries added yet.
+> <details>
+> <summary>✅ <strong>Web connections by user and device</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-web-connections.kql](../Microsoft Defender for Endpoint/Device-web-connections.kql).
+>
+> ```kql
+> // Device Web Connections
+> // Objective: Shows the websites and web addresses that devices connected to, with the user, device, destination URL, IP, port, and the program that made the connection.
+> // Use it to see what sites a user reached, and to hunt for a specific site, domain, or program with the filters. Includes connections that succeeded, failed, or were requested. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceNetworkEvents, events that have a RemoteUrl (Microsoft Defender for Endpoint).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices, all sites, all programs).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches the account name, DOMAIN\name, or SID of the program that made the connection)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> let UrlKeywords = dynamic([]);          // Example: ["dropbox.com", "pastebin", "mega.nz"] (shows connections to any URL containing these words)
+> let TargetPrograms = dynamic([]);       // Example: ["chrome.exe", "msedge.exe", "powershell.exe"] (the program that made the connection)
+> //
+> // ----- Part 1: Filter web connections -----
+> //
+> DeviceNetworkEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where isnotempty(RemoteUrl)
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> | where (array_length(TargetUsers) == 0 or InitiatingProcessAccountName in~ (TargetUsers)
+>     or strcat(InitiatingProcessAccountDomain, "\\", InitiatingProcessAccountName) in~ (TargetUsers)
+>     or InitiatingProcessAccountSid in~ (TargetUsers))
+> | where (array_length(UrlKeywords) == 0 or RemoteUrl has_any (UrlKeywords))
+> | where (array_length(TargetPrograms) == 0 or InitiatingProcessFileName in~ (TargetPrograms))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, UserName = InitiatingProcessAccountName, UserDomain = InitiatingProcessAccountDomain, DeviceName, RemoteUrl,
+>     RemoteIP, RemotePort, Protocol, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, LocalIP,
+>     UserSid = InitiatingProcessAccountSid, DeviceId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Browser opened URLs</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-browser-opened-URLs.kql](../Microsoft Defender for Endpoint/Device-browser-opened-URLs.kql).
+>
+> ```kql
+> // Device Browser Opened URLs
+> // Objective: Shows links and files that were opened in a web browser on a device, with the user, device, the address or shortcut opened, and the program that opened it.
+> // Use it to see what a user or program launched into a browser, and to hunt for a specific site or program with the filters. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceEvents, ActionType BrowserLaunchedToOpenUrl (Microsoft Defender for Endpoint).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all accounts, all devices, all addresses, all programs).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches the account name, DOMAIN\name, or SID that opened the link)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> let UrlKeywords = dynamic([]);          // Example: ["dropbox.com", "login", "docusign"] (shows opened addresses containing any of these words)
+> let TargetPrograms = dynamic([]);       // Example: ["outlook.exe", "winword.exe", "powershell.exe"] (the program that opened the browser)
+> //
+> // ----- Part 1: Filter browser launches -----
+> //
+> DeviceEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where ActionType == "BrowserLaunchedToOpenUrl"
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> | where (array_length(TargetUsers) == 0 or InitiatingProcessAccountName in~ (TargetUsers)
+>     or strcat(InitiatingProcessAccountDomain, "\\", InitiatingProcessAccountName) in~ (TargetUsers)
+>     or InitiatingProcessAccountSid in~ (TargetUsers))
+> | where (array_length(UrlKeywords) == 0 or RemoteUrl has_any (UrlKeywords))
+> | where (array_length(TargetPrograms) == 0 or InitiatingProcessFileName in~ (TargetPrograms))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, UserName = InitiatingProcessAccountName, UserDomain = InitiatingProcessAccountDomain, DeviceName, RemoteUrl,
+>     InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessParentFileName,
+>     UserSid = InitiatingProcessAccountSid, DeviceId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>DNS lookups</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-DNS-lookups.kql](../Microsoft Defender for Endpoint/Device-DNS-lookups.kql).
+>
+> ```kql
+> // Device DNS Lookups
+> // Objective: Shows the domain names that devices looked up, with the device, the domain, the answers returned, and the program that asked.
+> // Use it to see which domains a device resolved, and to hunt for a specific domain or program with the filters. Raw events.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: DeviceEvents, ActionType DnsQueryResponse (Microsoft Defender for Endpoint).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all devices, all domains, all programs).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "NT AUTHORITY\\network service", "S-1-5-20"] (matches the account name, DOMAIN\name, or SID of the program that asked)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+> let DomainKeywords = dynamic([]);       // Example: ["pastebin.com", "ngrok", "duckdns.org"] (shows lookups of any domain containing these words)
+> let TargetPrograms = dynamic([]);       // Example: ["svchost.exe", "chrome.exe", "powershell.exe"] (the program that asked for the lookup)
+> //
+> // ----- Part 1: Filter DNS lookups -----
+> //
+> DeviceEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where ActionType == "DnsQueryResponse"
+> | where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+> | where (array_length(TargetUsers) == 0 or InitiatingProcessAccountName in~ (TargetUsers)
+>     or strcat(InitiatingProcessAccountDomain, "\\", InitiatingProcessAccountName) in~ (TargetUsers)
+>     or InitiatingProcessAccountSid in~ (TargetUsers))
+> | extend DnsQueryString = tostring(todynamic(AdditionalFields).DnsQueryString)
+> | where (array_length(DomainKeywords) == 0 or DnsQueryString has_any (DomainKeywords))
+> | where (array_length(TargetPrograms) == 0 or InitiatingProcessFileName in~ (TargetPrograms))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, DeviceName, DnsQueryString, DnsQueryResult = todynamic(AdditionalFields).DnsQueryResult,
+>     ClientProcessName = tostring(todynamic(AdditionalFields).ClientProcessName),
+>     UserName = InitiatingProcessAccountName, UserDomain = InitiatingProcessAccountDomain,
+>     InitiatingProcessFileName, InitiatingProcessCommandLine, UserSid = InitiatingProcessAccountSid, DeviceId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
 
 </details>
 

@@ -1,0 +1,34 @@
+// Device Web Connections
+// Objective: Shows the websites and web addresses that devices connected to, with the user, device, destination URL, IP, port, and the program that made the connection.
+// Use it to see what sites a user reached, and to hunt for a specific site, domain, or program with the filters. Includes connections that succeeded, failed, or were requested. Raw events.
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+// Source: DeviceNetworkEvents, events that have a RemoteUrl (Microsoft Defender for Endpoint).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all accounts, all devices, all sites, all programs).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["jdoe", "CONTOSO\\jdoe", "S-1-5-21-..."] (matches the account name, DOMAIN\name, or SID of the program that made the connection)
+let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+let UrlKeywords = dynamic([]);          // Example: ["dropbox.com", "pastebin", "mega.nz"] (shows connections to any URL containing these words)
+let TargetPrograms = dynamic([]);       // Example: ["chrome.exe", "msedge.exe", "powershell.exe"] (the program that made the connection)
+//
+// ----- Part 1: Filter web connections -----
+//
+DeviceNetworkEvents
+| where TimeGenerated between (StartTime .. EndTime)
+| where isnotempty(RemoteUrl)
+| where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+| where (array_length(TargetUsers) == 0 or InitiatingProcessAccountName in~ (TargetUsers)
+    or strcat(InitiatingProcessAccountDomain, "\\", InitiatingProcessAccountName) in~ (TargetUsers)
+    or InitiatingProcessAccountSid in~ (TargetUsers))
+| where (array_length(UrlKeywords) == 0 or RemoteUrl has_any (UrlKeywords))
+| where (array_length(TargetPrograms) == 0 or InitiatingProcessFileName in~ (TargetPrograms))
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, UserName = InitiatingProcessAccountName, UserDomain = InitiatingProcessAccountDomain, DeviceName, RemoteUrl,
+    RemoteIP, RemotePort, Protocol, ActionType, InitiatingProcessFileName, InitiatingProcessCommandLine, LocalIP,
+    UserSid = InitiatingProcessAccountSid, DeviceId
+| top 1000 by TimeGenerated desc

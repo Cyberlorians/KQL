@@ -1,0 +1,36 @@
+// Device DNS Lookups
+// Objective: Shows the domain names that devices looked up, with the device, the domain, the answers returned, and the program that asked.
+// Use it to see which domains a device resolved, and to hunt for a specific domain or program with the filters. Raw events.
+// Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+// Source: DeviceEvents, ActionType DnsQueryResponse (Microsoft Defender for Endpoint).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all devices, all domains, all programs).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["jdoe", "NT AUTHORITY\\network service", "S-1-5-20"] (matches the account name, DOMAIN\name, or SID of the program that asked)
+let TargetDevices = dynamic([]);        // Example: ["pc01", "server02"] (case-insensitive whole-word match on the device name)
+let DomainKeywords = dynamic([]);       // Example: ["pastebin.com", "ngrok", "duckdns.org"] (shows lookups of any domain containing these words)
+let TargetPrograms = dynamic([]);       // Example: ["svchost.exe", "chrome.exe", "powershell.exe"] (the program that asked for the lookup)
+//
+// ----- Part 1: Filter DNS lookups -----
+//
+DeviceEvents
+| where TimeGenerated between (StartTime .. EndTime)
+| where ActionType == "DnsQueryResponse"
+| where (array_length(TargetDevices) == 0 or DeviceName has_any (TargetDevices))
+| where (array_length(TargetUsers) == 0 or InitiatingProcessAccountName in~ (TargetUsers)
+    or strcat(InitiatingProcessAccountDomain, "\\", InitiatingProcessAccountName) in~ (TargetUsers)
+    or InitiatingProcessAccountSid in~ (TargetUsers))
+| extend DnsQueryString = tostring(todynamic(AdditionalFields).DnsQueryString)
+| where (array_length(DomainKeywords) == 0 or DnsQueryString has_any (DomainKeywords))
+| where (array_length(TargetPrograms) == 0 or InitiatingProcessFileName in~ (TargetPrograms))
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, DeviceName, DnsQueryString, DnsQueryResult = todynamic(AdditionalFields).DnsQueryResult,
+    ClientProcessName = tostring(todynamic(AdditionalFields).ClientProcessName),
+    UserName = InitiatingProcessAccountName, UserDomain = InitiatingProcessAccountDomain,
+    InitiatingProcessFileName, InitiatingProcessCommandLine, UserSid = InitiatingProcessAccountSid, DeviceId
+| top 1000 by TimeGenerated desc

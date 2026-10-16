@@ -2141,7 +2141,7 @@ Results are observed events, not complete mailbox or file contents.
 > </details>
 
 > <details>
-> <summary><strong>Windows and Active Directory account and group management changes</strong></summary>
+> <summary>✅ <strong>Windows and Active Directory account and group management changes</strong></summary>
 >
 > Query file: [Windows/SecurityEvent/Windows-account-and-group-management-changes.kql](../Windows/SecurityEvent/Windows-account-and-group-management-changes.kql).
 >

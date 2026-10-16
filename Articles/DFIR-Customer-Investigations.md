@@ -2100,7 +2100,93 @@ Results are observed events, not complete mailbox or file contents.
 <details>
 <summary><strong>User Identity</strong></summary>
 
-No queries added yet.
+> <details>
+> <summary>✅ <strong>User account profile, roles, groups and risk</strong></summary>
+>
+> Query file: [Microsoft Defender for Identity/Identity-account-profile.kql](../Microsoft%20Defender%20for%20Identity/Identity-account-profile.kql).
+>
+> ```kql
+> // User Identity > User account profile, roles, groups and risk
+> // Objective: Shows the most recent identity profile for each user account: who the user is (name, email, department, job title, manager), whether the account is enabled,
+> // when it was created, its criticality and risk level, its Entra roles (including PIM-eligible roles), its group memberships, and where the profile came from (Entra ID, Active Directory).
+> // One row per account, newest profile snapshot in the time window.
+> // Source: IdentityInfo (Defender for Identity and Entra ID account information).
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all accounts.
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "xadmin", "S-1-5-21-..."] (matches UPN, account name, display name, email address, SID or object ID)
+> let TargetRolesOrGroups = dynamic([]);  // Example: ["Global Administrator", "Domain Admins"] (case-insensitive, matches any Entra role, PIM role or group the account belongs to)
+> //
+> // ----- Part 1: Latest profile per account -----
+> //
+> IdentityInfo
+> | where TimeGenerated between (StartTime .. EndTime)
+> | extend IdentityKey = iff(isnotempty(AccountObjectId), AccountObjectId, iff(isnotempty(OnPremSid), OnPremSid, AccountUpn))
+> | summarize arg_max(TimeGenerated, *) by IdentityKey
+> //
+> // ----- Part 2: Filter and output -----
+> //
+> | where (array_length(TargetUsers) == 0 or AccountUpn in~ (TargetUsers) or AccountName in~ (TargetUsers) or AccountDisplayName in~ (TargetUsers)
+>     or EmailAddress in~ (TargetUsers) or OnPremSid in~ (TargetUsers) or AccountObjectId in~ (TargetUsers))
+> | where (array_length(TargetRolesOrGroups) == 0 or tostring(AssignedRoles) has_any (TargetRolesOrGroups)
+>     or tostring(PrivilegedEntraPimRoles) has_any (TargetRolesOrGroups) or tostring(GroupMembership) has_any (TargetRolesOrGroups))
+> | project TimeGenerated, AccountUpn, AccountName, AccountDomain, AccountDisplayName, EmailAddress, Department, JobTitle, Manager,
+>     IsAccountEnabled, CreatedDateTime, CriticalityLevel, RiskLevel, RiskStatus, AssignedRoles, PrivilegedEntraPimRoles, GroupMembership,
+>     Tags, SourceProviders, Type, AccountObjectId, OnPremSid, DistinguishedName
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary><strong>Windows and Active Directory account and group management changes</strong></summary>
+>
+> Query file: [Windows/SecurityEvent/Windows-account-and-group-management-changes.kql](../Windows/SecurityEvent/Windows-account-and-group-management-changes.kql).
+>
+> ```kql
+> // User Identity > Windows and Active Directory account and group management changes
+> // Objective: Shows changes to Windows and Active Directory accounts and groups: account creation, enable, disable, delete, lockout and unlock, password change and reset attempts,
+> // account attribute changes, and group creation, membership and deletion, with who made the change, the account or group affected, the member added or removed, and the computer that logged it. Raw events, newest first.
+> // Written for the unified Defender portal (Sentinel + XDR). If you are not unified, replace every TimeGenerated with Timestamp.
+> // Source: SecurityEvent (Windows Security log from domain controllers and servers, collected by the Windows Security Events connector / Azure Monitor Agent).
+> // Audit policy: Advanced Audit Policy Configuration > Account Management > Audit User Account Management, Audit Security Group Management (Success). Domain controllers log domain accounts, other computers log local accounts.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results.
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["xadmin", "Domain Admins"] (matches who made the change, the account or group changed, or the member added or removed)
+> let TargetComputers = dynamic([]);      // Example: ["dc01", "pc01"] (case-insensitive whole-word match on the computer name)
+> //
+> // ----- Part 1: Filter account and group management events -----
+> // 4720 created, 4722 enabled, 4723 password change, 4724 password reset, 4725 disabled, 4726 deleted, 4738 changed, 4740 locked out, 4767 unlocked, 4781 renamed.
+> // 4727/4731/4754 group created, 4728/4732/4756 member added, 4729/4733/4757 member removed, 4730/4734/4758 group deleted, 4735/4737/4755 group changed.
+> //
+> SecurityEvent
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where EventID in (4720, 4722, 4723, 4724, 4725, 4726, 4738, 4740, 4767, 4781,
+>     4727, 4728, 4729, 4730, 4731, 4732, 4733, 4734, 4735, 4737, 4754, 4755, 4756, 4757, 4758)
+> | where (array_length(TargetComputers) == 0 or Computer has_any (TargetComputers))
+> | where (array_length(TargetUsers) == 0 or SubjectUserName in~ (TargetUsers) or TargetUserName in~ (TargetUsers)
+>     or strcat(SubjectDomainName, "\\", SubjectUserName) in~ (TargetUsers)
+>     or strcat(TargetDomainName, "\\", TargetUserName) in~ (TargetUsers)
+>     or MemberName has_any (TargetUsers))
+> //
+> // ----- Part 2: Output -----
+> // For user account events TargetUserName is the account changed. For group events TargetUserName is the group and MemberName is the member added or removed.
+> //
+> | extend IsGroupEvent = EventID in (4727, 4728, 4729, 4730, 4731, 4732, 4733, 4734, 4735, 4737, 4754, 4755, 4756, 4757, 4758)
+> | project TimeGenerated, ChangedBy = SubjectUserName, ChangedByDomain = SubjectDomainName, EventID, Activity, Computer,
+>     AffectedAccount = iff(IsGroupEvent, "", strcat(TargetDomainName, "\\", TargetUserName)),
+>     AffectedGroup = iff(IsGroupEvent, strcat(TargetDomainName, "\\", TargetUserName), ""),
+>     MemberName, MemberSid, TargetSid, SamAccountName, UserPrincipalName, DisplayName,
+>     OldUacValue, NewUacValue, UserAccountControl, PasswordLastSet, PrivilegeList, SubjectUserSid, SubjectLogonId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
 
 </details>
 

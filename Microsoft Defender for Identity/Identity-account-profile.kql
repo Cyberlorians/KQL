@@ -1,0 +1,31 @@
+// User Identity > User account profile, roles, groups and risk
+// Objective: Shows the most recent identity profile for each user account: who the user is (name, email, department, job title, manager), whether the account is enabled,
+// when it was created, its criticality and risk level, its Entra roles (including PIM-eligible roles), its group memberships, and where the profile came from (Entra ID, Active Directory).
+// One row per account, newest profile snapshot in the time window.
+// Source: IdentityInfo (Defender for Identity and Entra ID account information).
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all accounts.
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com", "xadmin", "S-1-5-21-..."] (matches UPN, account name, display name, email address, SID or object ID)
+let TargetRolesOrGroups = dynamic([]);  // Example: ["Global Administrator", "Domain Admins"] (case-insensitive, matches any Entra role, PIM role or group the account belongs to)
+//
+// ----- Part 1: Latest profile per account -----
+//
+IdentityInfo
+| where TimeGenerated between (StartTime .. EndTime)
+| extend IdentityKey = iff(isnotempty(AccountObjectId), AccountObjectId, iff(isnotempty(OnPremSid), OnPremSid, AccountUpn))
+| summarize arg_max(TimeGenerated, *) by IdentityKey
+//
+// ----- Part 2: Filter and output -----
+//
+| where (array_length(TargetUsers) == 0 or AccountUpn in~ (TargetUsers) or AccountName in~ (TargetUsers) or AccountDisplayName in~ (TargetUsers)
+    or EmailAddress in~ (TargetUsers) or OnPremSid in~ (TargetUsers) or AccountObjectId in~ (TargetUsers))
+| where (array_length(TargetRolesOrGroups) == 0 or tostring(AssignedRoles) has_any (TargetRolesOrGroups)
+    or tostring(PrivilegedEntraPimRoles) has_any (TargetRolesOrGroups) or tostring(GroupMembership) has_any (TargetRolesOrGroups))
+| project TimeGenerated, AccountUpn, AccountName, AccountDomain, AccountDisplayName, EmailAddress, Department, JobTitle, Manager,
+    IsAccountEnabled, CreatedDateTime, CriticalityLevel, RiskLevel, RiskStatus, AssignedRoles, PrivilegedEntraPimRoles, GroupMembership,
+    Tags, SourceProviders, Type, AccountObjectId, OnPremSid, DistinguishedName
+| top 1000 by TimeGenerated desc

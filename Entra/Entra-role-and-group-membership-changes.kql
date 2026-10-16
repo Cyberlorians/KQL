@@ -1,0 +1,38 @@
+// User Identity > Entra role and group membership changes
+// Objective: Shows users being added to or removed from Entra ID directory roles and groups, including Privileged Identity Management (PIM) requests,
+// activations, eligible assignments and expirations, with who made the change, which user was affected, the role or group, and the result.
+// Raw events, newest first. Source: AuditLogs (Entra ID audit logs), role and group membership and ownership operations.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all users, all roles and groups, all operations, all results).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["user@contoso.com"] (matches the person who made the change, or the user who was added or removed)
+let TargetRolesOrGroups = dynamic([]);  // Example: ["Global Administrator", "Finance Team"] (case-insensitive, matches the role or group display name)
+let TargetOperations = dynamic([]);     // Example: ["Add member to role", "PIM activation"] (case-insensitive whole-word match on the operation name)
+let TargetResults = dynamic([]);        // Example: ["failure"] (success, failure, clientError)
+//
+// ----- Part 1: Filter Entra role and group membership events -----
+//
+AuditLogs
+| where TimeGenerated between (StartTime .. EndTime)
+| where Category in ("RoleManagement", "GroupManagement") and OperationName has_any ("member", "owner")
+| extend InitiatedByUser = tostring(InitiatedBy.user.userPrincipalName),
+    InitiatedByApp = tostring(InitiatedBy.app.displayName),
+    InitiatorIPAddress = tostring(InitiatedBy.user.ipAddress)
+| mv-apply T = TargetResources on (
+    summarize AffectedUser = take_anyif(tostring(T.userPrincipalName), T.type =~ "User" and isnotempty(tostring(T.userPrincipalName))),
+        RoleOrGroup = take_anyif(tostring(T.displayName), T.type in~ ("Role", "Group")),
+        RoleOrGroupType = take_anyif(tostring(T.type), T.type in~ ("Role", "Group")),
+        RoleOrGroupId = take_anyif(tostring(T.id), T.type in~ ("Role", "Group")))
+| where (array_length(TargetUsers) == 0 or InitiatedByUser in~ (TargetUsers) or AffectedUser in~ (TargetUsers))
+| where (array_length(TargetRolesOrGroups) == 0 or RoleOrGroup in~ (TargetRolesOrGroups))
+| where (array_length(TargetOperations) == 0 or OperationName has_any (TargetOperations))
+| where (array_length(TargetResults) == 0 or Result in~ (TargetResults))
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, InitiatedByUser, InitiatedByApp, InitiatorIPAddress, OperationName, Category, Result, ResultReason,
+    AffectedUser, RoleOrGroup, RoleOrGroupType, RoleOrGroupId, TargetResources, AdditionalDetails, CorrelationId
+| top 1000 by TimeGenerated desc

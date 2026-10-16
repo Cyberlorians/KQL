@@ -1,0 +1,29 @@
+// User Identity > Active Directory account and directory changes (Defender for Identity)
+// Objective: Shows on-premises Active Directory identity activity seen by Defender for Identity: password changes and failed changes, account and group changes,
+// service creation and discovery activity, with the account that did it, the account or device it was done to, the domain controller and the source IP.
+// Raw events, newest first. Source: IdentityDirectoryEvents. Which ActionType values appear depends on the Defender for Identity sensors and settings in the tenant.
+//
+// ----- Part 0: Analyst-Driven Targeting (Optional) -----
+// Leave these empty to return all results (all accounts, all devices, all actions).
+//
+let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+let TargetUsers = dynamic([]);          // Example: ["jdoe", "jdoe@contoso.com"] (matches the account that did it or the account it was done to, by name, UPN or SID)
+let TargetDevices = dynamic([]);        // Example: ["dc01", "dc01.contoso.com"] (case-insensitive, matches the device that did it, the target device or the domain controller)
+let TargetActions = dynamic([]);        // Example: ["Account Password changed", "Account Password change failed"] (ActionType)
+//
+// ----- Part 1: Filter directory events -----
+//
+IdentityDirectoryEvents
+| where TimeGenerated between (StartTime .. EndTime)
+| where (array_length(TargetActions) == 0 or ActionType in~ (TargetActions))
+| where (array_length(TargetUsers) == 0 or AccountName in~ (TargetUsers) or AccountUpn in~ (TargetUsers) or AccountSid in~ (TargetUsers)
+    or TargetAccountUpn in~ (TargetUsers))
+| where (array_length(TargetDevices) == 0 or DeviceName in~ (TargetDevices) or TargetDeviceName in~ (TargetDevices) or DestinationDeviceName in~ (TargetDevices))
+//
+// ----- Part 2: Output -----
+//
+| project TimeGenerated, ActionType, AccountName, AccountDomain, AccountUpn, AccountDisplayName, AccountSid,
+    TargetAccountUpn, TargetAccountDisplayName, TargetDeviceName, DeviceName, DestinationDeviceName, DestinationIPAddress, IPAddress, Protocol, Application, Location,
+    AdditionalFields, ReportId
+| top 1000 by TimeGenerated desc

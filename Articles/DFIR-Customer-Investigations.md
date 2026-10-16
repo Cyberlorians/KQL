@@ -2193,6 +2193,115 @@ Results are observed events, not complete mailbox or file contents.
 <details>
 <summary><strong>File Metadata Tracking</strong></summary>
 
-No queries added yet.
+> <details>
+> <summary>✅ <strong>Endpoint file activity and metadata</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/Device-file-events-and-metadata.kql](../Microsoft%20Defender%20for%20Endpoint/Device-file-events-and-metadata.kql).
+>
+> ```kql
+> // File Metadata Tracking > Endpoint file activity and metadata
+> // Objective: Shows files being created, modified, renamed or deleted on devices with the file name, extension, folder, size, hashes (SHA256, SHA1, MD5),
+> // where the file came from (download URL, referrer, source IP), who and what process did it, the previous name or folder on a rename, and any sensitivity label.
+> // Raw events, newest first. Source: DeviceFileEvents (Defender for Endpoint). Hashes and size are only present when the sensor was able to compute them for that event.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return all results (all users, all devices, all files, all actions).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe", "jdoe@contoso.com"] (the account that ran the process, or the remote account for a network file event)
+> let TargetDevices = dynamic([]);        // Example: ["pc01", "pc01.contoso.com"] (case-insensitive device name)
+> let TargetFileNames = dynamic([]);      // Example: ["payroll", "passwords.xlsx"] (whole-word match on the file name: "payroll" finds payroll.xlsx, "pay" does not)
+> let TargetExtensions = dynamic([]);     // Example: ["zip", "ps1", "docx"] (file extension without the dot)
+> let TargetHashes = dynamic([]);         // Example: ["<sha256, sha1 or md5>"]
+> let TargetActions = dynamic([]);        // Example: ["FileCreated", "FileModified", "FileRenamed", "FileDeleted"]
+> //
+> // ----- Part 1: Filter file events -----
+> //
+> DeviceFileEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where (array_length(TargetActions) == 0 or ActionType in~ (TargetActions))
+> | where (array_length(TargetDevices) == 0 or DeviceName in~ (TargetDevices))
+> | where (array_length(TargetUsers) == 0 or InitiatingProcessAccountName in~ (TargetUsers) or InitiatingProcessAccountUpn in~ (TargetUsers)
+>     or RequestAccountName in~ (TargetUsers))
+> | where (array_length(TargetFileNames) == 0 or FileName has_any (TargetFileNames))
+> | extend FileExtension = tolower(extract(@"\.([^.\\/]+)$", 1, FileName))
+> | where (array_length(TargetExtensions) == 0 or FileExtension in~ (TargetExtensions))
+> | where (array_length(TargetHashes) == 0 or SHA256 in~ (TargetHashes) or SHA1 in~ (TargetHashes) or MD5 in~ (TargetHashes))
+> //
+> // ----- Part 2: Output -----
+> //
+> | project TimeGenerated, DeviceName, ActionType, FileName, FileExtension, FolderPath, FileSize, SHA256, SHA1, MD5,
+>     PreviousFileName, PreviousFolderPath, FileOriginUrl, FileOriginReferrerUrl, FileOriginIP,
+>     UserName = InitiatingProcessAccountName, UserUpn = InitiatingProcessAccountUpn, InitiatingProcessFileName, InitiatingProcessCommandLine,
+>     RequestAccountName, RequestSourceIP, ShareName, SensitivityLabel, ReportId
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
+
+> <details>
+> <summary>✅ <strong>Track a file by name or hash across endpoint, email and Microsoft 365</strong></summary>
+>
+> Query file: [Microsoft Defender for Endpoint/File-tracking-across-endpoint-email-and-Microsoft-365.kql](../Microsoft%20Defender%20for%20Endpoint/File-tracking-across-endpoint-email-and-Microsoft-365.kql).
+>
+> ```kql
+> // File Metadata Tracking > Track a file by name or hash across endpoint, email and Microsoft 365
+> // Objective: Follows a file across the places it can be seen: files on devices (Defender for Endpoint), email attachments (Defender for Office 365),
+> // and SharePoint and OneDrive file activity (Microsoft 365 audit). One row per event, in a common shape: when, where it was seen, what happened, file name, extension,
+> // size, SHA256, location, who and where. Matching is by file name or by hash; a row is returned when it matches either list.
+> // SharePoint and OneDrive audit events do not carry hashes or sizes, so they can only be found by file name. Hashes match endpoint and email rows.
+> // Source: DeviceFileEvents, EmailAttachmentInfo, OfficeActivity.
+> //
+> // ----- Part 0: Analyst-Driven Targeting (Optional) -----
+> // Leave these empty to return everything (top 1000 events).
+> //
+> let StartTime = ago(30d);               // Example: datetime(2026-10-14T00:00:00Z)
+> let EndTime = now();                    // Example: datetime(2026-10-14T23:59:59Z)
+> let TargetFileNames = dynamic([]);      // Example: ["payroll", "invoice.pdf"] (whole-word match on the file name: "payroll" finds payroll.xlsx, "pay" does not)
+> let TargetHashes = dynamic([]);         // Example: ["<sha256, sha1 or md5>"] (email attachments carry SHA256 only)
+> let TargetUsers = dynamic([]);          // Example: ["jdoe@contoso.com"] (the account on the device, the email recipient or sender, or the Microsoft 365 user)
+> //
+> // ----- Part 1: Endpoint files -----
+> //
+> let EndpointFiles = DeviceFileEvents
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where (array_length(TargetFileNames) == 0 and array_length(TargetHashes) == 0)
+>     or (array_length(TargetFileNames) > 0 and FileName has_any (TargetFileNames))
+>     or (array_length(TargetHashes) > 0 and (SHA256 in~ (TargetHashes) or SHA1 in~ (TargetHashes) or MD5 in~ (TargetHashes)))
+> | where (array_length(TargetUsers) == 0 or InitiatingProcessAccountUpn in~ (TargetUsers) or InitiatingProcessAccountName in~ (TargetUsers))
+> | project TimeGenerated, Source = "Endpoint file", Activity = ActionType, FileName, FileExtension = tolower(extract(@"\.([^.\\/]+)$", 1, FileName)),
+>     FileSize = tolong(FileSize), SHA256, Location = FolderPath,
+>     User = coalesce(InitiatingProcessAccountUpn, InitiatingProcessAccountName), SeenOn = DeviceName, Detail = coalesce(FileOriginUrl, "");
+> //
+> // ----- Part 2: Email attachments -----
+> //
+> let EmailAttachments = EmailAttachmentInfo
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where (array_length(TargetFileNames) == 0 and array_length(TargetHashes) == 0)
+>     or (array_length(TargetFileNames) > 0 and FileName has_any (TargetFileNames))
+>     or (array_length(TargetHashes) > 0 and SHA256 in~ (TargetHashes))
+> | where (array_length(TargetUsers) == 0 or RecipientEmailAddress in~ (TargetUsers) or SenderFromAddress in~ (TargetUsers))
+> | project TimeGenerated, Source = "Email attachment", Activity = "Attachment received or sent", FileName, FileExtension = tolower(extract(@"\.([^.\\/]+)$", 1, FileName)),
+>     FileSize = tolong(FileSize), SHA256, Location = NetworkMessageId,
+>     User = RecipientEmailAddress, SeenOn = SenderFromAddress, Detail = FileType;
+> //
+> // ----- Part 3: SharePoint and OneDrive files -----
+> //
+> let CloudFiles = OfficeActivity
+> | where TimeGenerated between (StartTime .. EndTime)
+> | where OfficeWorkload in~ ("SharePoint", "OneDrive") and isnotempty(SourceFileName)
+> | where array_length(TargetHashes) == 0 or array_length(TargetFileNames) > 0
+> | where array_length(TargetFileNames) == 0 or SourceFileName has_any (TargetFileNames)
+> | where (array_length(TargetUsers) == 0 or UserId in~ (TargetUsers))
+> | project TimeGenerated, Source = strcat(OfficeWorkload, " file"), Activity = Operation, FileName = SourceFileName, FileExtension = tolower(SourceFileExtension),
+>     FileSize = long(null), SHA256 = "", Location = SourceRelativeUrl,
+>     User = UserId, SeenOn = Site_Url, Detail = "";
+> //
+> // ----- Part 4: Output -----
+> //
+> union EndpointFiles, EmailAttachments, CloudFiles
+> | top 1000 by TimeGenerated desc
+> ```
+> </details>
 
 </details>
